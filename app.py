@@ -310,7 +310,7 @@ def reset() -> None:
 @when("click", "#calculator")
 def handle_click(event):
     action_element = event.target.closest("[data-action]")
-    if not action_element:
+    if not hasattr(action_element, "getAttribute"):
         return
     action = str(action_element.getAttribute("data-action"))
     if action == "units":
