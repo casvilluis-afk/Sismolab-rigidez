@@ -1,4 +1,5 @@
-"""Núcleo de cálculo para la rigidez lateral de columnas de concreto armado.
+"""Núcleo de cálculo para la rigidez lateral de columnas de concreto armado,
+acero estructural o albañilería.
 
 El módulo no depende del navegador. Puede reutilizarse más adelante en análisis
 matricial, una API o aplicaciones de escritorio sin cambiar las ecuaciones base.
@@ -14,8 +15,27 @@ from typing import Literal
 UnitSystem = Literal["SI", "MKS"]
 SectionShape = Literal["square", "circle"]
 JointType = Literal["fixed", "pinned"]
+MaterialType = Literal["concrete", "steel", "masonry"]
+Direction = Literal["X", "Y"]
 
 MPA_TO_KGF_CM2 = 10.1971621298
+
+# Módulo elástico del acero: prácticamente constante en el rango elástico,
+# a diferencia del concreto o la albañilería (no depende de una resistencia
+# de diseño ingresada por el usuario).
+STEEL_MODULUS_SI = 200_000.0  # MPa
+STEEL_MODULUS_MKS = 2_039_000.0  # kgf/cm² (≈ 200 000 MPa)
+
+MATERIAL_LABELS: dict[MaterialType, str] = {
+    "concrete": "Concreto armado",
+    "steel": "Acero estructural",
+    "masonry": "Albañilería",
+}
+
+DIRECTION_LABELS: dict[Direction, str] = {
+    "X": "Dirección X",
+    "Y": "Dirección Y",
+}
 
 
 @dataclass(slots=True)
@@ -27,6 +47,8 @@ class ColumnGroup:
     fc: float
     base: JointType
     top: JointType
+    material: MaterialType = "concrete"
+    direction: Direction = "X"
 
 
 @dataclass(slots=True)
@@ -60,8 +82,12 @@ def validate_group(group: ColumnGroup) -> None:
         raise ValueError("La sección debe ser cuadrada o circular.")
     if group.base not in ("fixed", "pinned") or group.top not in ("fixed", "pinned"):
         raise ValueError("La condición de apoyo no es válida.")
+    if group.material not in ("concrete", "steel", "masonry"):
+        raise ValueError("El material debe ser concreto, acero o albañilería.")
+    if group.direction not in ("X", "Y"):
+        raise ValueError("La dirección debe ser X o Y.")
     _positive_number(group.dimension, "La dimensión")
-    _positive_number(group.fc, "f′c")
+    _positive_number(group.fc, "La resistencia")
 
 
 def boundary_factor(base: JointType, top: JointType) -> float:
@@ -81,6 +107,32 @@ def boundary_description(base: JointType, top: JointType) -> str:
     return "Curvatura simple · un giro liberado"
 
 
+def material_label(material: MaterialType) -> str:
+    return MATERIAL_LABELS.get(material, material)
+
+
+def direction_label(direction: Direction) -> str:
+    return DIRECTION_LABELS.get(direction, direction)
+
+
+def resistance_label(material: MaterialType) -> str:
+    """Nombre del parámetro de resistencia según el material."""
+    if material == "masonry":
+        return "f′m"
+    if material == "steel":
+        return "fy (referencial)"
+    return "f′c"
+
+
+def resistance_bounds(material: MaterialType, units: UnitSystem) -> tuple[str, str, str]:
+    """(min, max, step) sugeridos para el campo de resistencia, como texto."""
+    if material == "masonry":
+        return ("2", "20", "0.1") if units == "SI" else ("20", "200", "1")
+    if material == "steel":
+        return ("100", "600", "1") if units == "SI" else ("1000", "6000", "10")
+    return ("10", "100", "0.1") if units == "SI" else ("100", "1000", "1")
+
+
 def section_inertia(shape: SectionShape, dimension: float) -> float:
     dimension = _positive_number(dimension, "La dimensión")
     if shape == "square":
@@ -90,13 +142,20 @@ def section_inertia(shape: SectionShape, dimension: float) -> float:
     raise ValueError("La sección debe ser cuadrada o circular.")
 
 
-def elastic_modulus(fc: float, units: UnitSystem) -> float:
-    fc = _positive_number(fc, "f′c")
-    if units == "SI":
-        return 4_700.0 * sqrt(fc)
-    if units == "MKS":
-        return 15_000.0 * sqrt(fc)
-    raise ValueError("El sistema de unidades debe ser SI o MKS.")
+def elastic_modulus(material: MaterialType, fc: float, units: UnitSystem) -> float:
+    if units not in ("SI", "MKS"):
+        raise ValueError("El sistema de unidades debe ser SI o MKS.")
+    if material == "steel":
+        # El módulo del acero es prácticamente constante en el rango elástico.
+        return STEEL_MODULUS_SI if units == "SI" else STEEL_MODULUS_MKS
+    fc = _positive_number(fc, "La resistencia")
+    if material == "masonry":
+        # E.070 (Perú): Em = 500 · f'm, aplicado de forma simplificada en
+        # ambos sistemas de unidades para fines educativos.
+        return 500.0 * fc
+    if material == "concrete":
+        return (4_700.0 if units == "SI" else 15_000.0) * sqrt(fc)
+    raise ValueError("El material debe ser concreto, acero o albañilería.")
 
 
 def calculate_group(
@@ -110,7 +169,7 @@ def calculate_group(
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
 
     factor = boundary_factor(group.base, group.top)
-    modulus = elastic_modulus(group.fc, units)
+    modulus = elastic_modulus(group.material, group.fc, units)
     inertia = section_inertia(group.shape, group.dimension)
     height = story_height_m * (1_000.0 if units == "SI" else 100.0)
     raw_stiffness = factor * modulus * inertia / height**3
@@ -142,8 +201,12 @@ def calculate_story(
     if not 1 <= len(groups) <= 8:
         raise ValueError("Debe existir entre 1 y 8 grupos de columnas.")
     results = [calculate_group(group, story_height_m, units) for group in groups]
+    totals_by_direction: dict[Direction, float] = {"X": 0.0, "Y": 0.0}
+    for group, result in zip(groups, results):
+        totals_by_direction[group.direction] += result.contribution
     return {
         "total": sum(result.contribution for result in results),
+        "totals": totals_by_direction,
         "unit": "kN/m" if units == "SI" else "tonf/m",
         "groups": [result.to_dict() for result in results],
     }
