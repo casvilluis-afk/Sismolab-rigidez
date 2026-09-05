@@ -100,7 +100,6 @@ select { padding: 8px 10px; }
 .shape-option.is-selected { color: var(--teal-dark); background: var(--teal-pale); border-color: #7dc3c1; }
 .shape-symbol { width: 16px; height: 16px; display: inline-block; border: 2px solid currentColor; }
 .shape-symbol.circle { border-radius: 50%; }
-.shape-options--triple { grid-template-columns: repeat(3,minmax(0,1fr)); }
 .total-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .case-note { display: flex; align-items: center; gap: 11px; margin-top: 15px; padding: 11px 12px; color: #345057; background: #f1f6f5; border-left: 3px solid var(--teal); border-radius: 6px; }
 .case-note > b { color: var(--teal); font-size: 19px; }
@@ -213,7 +212,6 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .column-card, .contribution-card, .calculation-card, .result-card, .theory-section { padding: 16px; }
   .form-grid, .form-grid--compact { grid-template-columns: 1fr; }
   .total-grid { grid-template-columns: 1fr; }
-  .shape-options--triple { grid-template-columns: 1fr; }
   .total-result { grid-template-columns: auto minmax(0,1fr); }
   .total-result strong { text-align: right; }
   .total-result em { grid-column: 2; text-align: right; }
