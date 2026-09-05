@@ -121,17 +121,15 @@ def group_card(group: ColumnGroup, index: int) -> str:
 
     concrete_selected = " is-selected" if group.material == "concrete" else ""
     steel_selected = " is-selected" if group.material == "steel" else ""
-    masonry_selected = " is-selected" if group.material == "masonry" else ""
     dir_x_selected = " is-selected" if group.direction == "X" else ""
     dir_y_selected = " is-selected" if group.direction == "Y" else ""
 
     material_options = f"""
       <fieldset class="field-block shape-field">
         <legend>Material</legend>
-        <div class="shape-options shape-options--triple">
-          <button type="button" class="shape-option{concrete_selected}" data-action="material" data-id="{group.id}" data-value="concrete">Concreto</button>
-          <button type="button" class="shape-option{steel_selected}" data-action="material" data-id="{group.id}" data-value="steel">Acero</button>
-          <button type="button" class="shape-option{masonry_selected}" data-action="material" data-id="{group.id}" data-value="masonry">Albañilería</button>
+        <div class="shape-options">
+          <button type="button" class="shape-option{concrete_selected}" data-action="material" data-id="{group.id}" data-value="concrete">Concreto armado</button>
+          <button type="button" class="shape-option{steel_selected}" data-action="material" data-id="{group.id}" data-value="steel">Acero estructural</button>
         </div>
       </fieldset>
       <fieldset class="field-block shape-field">
@@ -235,8 +233,6 @@ def modulus_step_text(group: ColumnGroup, calculation: dict) -> str:
     modulus_value = f"{format_number(calculation['elastic_modulus'])} {calculation['modulus_unit']}"
     if group.material == "steel":
         return f"E = <b>{modulus_value}</b> (constante del acero, no depende de f′c)"
-    if group.material == "masonry":
-        return f"E = 500 · f′m = 500 · {format_number(group.fc)} = <b>{modulus_value}</b>"
     modulus_factor = "4.700" if units == "SI" else "15.000"
     return f"E = {modulus_factor} · √{format_number(group.fc)} = <b>{modulus_value}</b>"
 
