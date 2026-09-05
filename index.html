@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Calculadora en Python de rigidez lateral para columnas cuadradas y circulares de concreto armado." />
+    <title>SismoLab · Rigidez lateral</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
+  </head>
+  <body>
+    <main id="calculator" aria-busy="true">
+      <header class="site-header">
+        <div class="page-shell header-shell">
+          <a class="brand" href="#inicio" aria-label="Ir al inicio">
+            <span class="brand-mark" aria-hidden="true">▥</span>
+            <span><strong>SismoLab</strong><small>Herramientas estructurales</small></span>
+          </a>
+          <div class="header-actions">
+            <span class="python-status" id="python-status"><i></i> Iniciando Python…</span>
+            <button class="button button-ghost" type="button" data-action="reset">↻ Reiniciar</button>
+          </div>
+        </div>
+      </header>
+
+      <section id="inicio" class="intro">
+        <div class="page-shell intro-grid">
+          <div>
+            <p class="eyebrow">RIGIDEZ LATERAL · MODELO DE CORTE</p>
+            <h1>Rigidez lateral del entrepiso</h1>
+            <p class="intro-copy">Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
+          </div>
+          <div class="model-note">
+            <span aria-hidden="true">i</span>
+            <p><strong>Hipótesis principal</strong>Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-shell unit-strip" aria-label="Sistema de unidades">
+        <div>
+          <span class="unit-strip__label">Sistema de unidades</span>
+          <span class="unit-strip__hint">El cambio convierte todos los datos ingresados.</span>
+        </div>
+        <div class="unit-toggle">
+          <button id="units-si" class="button is-active" type="button" data-action="units" data-value="SI" aria-pressed="true">SI <span>kN · MPa · mm</span></button>
+          <button id="units-mks" class="button" type="button" data-action="units" data-value="MKS" aria-pressed="false">MKS <span>tonf · kgf/cm² · cm</span></button>
+        </div>
+      </section>
+
+      <div class="page-shell workspace-grid">
+        <section class="input-panel" aria-labelledby="datos-heading">
+          <div class="section-heading">
+            <span class="step-number">01</span>
+            <div><h2 id="datos-heading">Datos del entrepiso</h2><p>Define la altura y cada grupo de columnas.</p></div>
+          </div>
+
+          <div class="story-card">
+            <div class="story-icon" aria-hidden="true">↕</div>
+            <div class="field-block">
+              <label for="story-height">Altura libre h</label>
+              <div class="input-with-unit">
+                <input id="story-height" name="story-height" type="number" min="1" max="12" step="0.05" value="3" data-field="story-height" />
+                <span>m</span>
+              </div>
+              <small>Distancia libre entre niveles de restricción.</small>
+            </div>
+          </div>
+
+          <div id="group-list" class="group-list">
+            <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora en Python…</strong></div>
+          </div>
+          <button id="add-group" type="button" class="button add-group" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
+        </section>
+
+        <section class="result-panel" aria-labelledby="resultado-heading">
+          <div class="result-card">
+            <div class="result-card__top">
+              <div><span class="result-kicker">RESULTADO DEL ENTREPISO</span><h2 id="resultado-heading">Rigidez lateral total</h2></div>
+              <span class="live-pill">Cálculo en vivo</span>
+            </div>
+            <output class="total-result" aria-live="polite">
+              <span>k<sub>ent</sub></span><strong id="total-stiffness">—</strong><em id="stiffness-unit">kN/m</em>
+            </output>
+            <div id="calculation-warning" class="calculation-warning" hidden></div>
+            <div class="formula-bar"><b>Σ</b><span>k<sub>ent</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³</span></div>
+          </div>
+
+          <div class="frame-diagram">
+            <svg viewBox="0 0 500 260" role="img" aria-label="Pórtico idealizado de un nivel con desplazamiento lateral">
+              <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker></defs>
+              <g class="frame-lines">
+                <path d="M112 206 C122 160, 93 108, 112 55" /><path d="M350 206 C360 160, 331 108, 350 55" />
+                <path d="M110 55 L365 55" class="frame-beam" />
+                <path d="M85 218 L139 218 M99 218 L87 232 M112 218 L100 232 M125 218 L113 232 M138 218 L126 232" />
+                <path d="M323 218 L377 218 M337 218 L325 232 M350 218 L338 232 M363 218 L351 232 M376 218 L364 232" />
+              </g>
+              <g class="frame-dimensions"><path d="M62 208 L62 58" /><path d="M55 208 L69 208 M55 58 L69 58" /><text x="31" y="136">h</text><text id="frame-height" x="17" y="158">3,00 m</text></g>
+              <g class="frame-load"><path d="M365 34 L444 34" marker-end="url(#arrow)" /><text x="382" y="22">Δ = 1</text></g>
+              <text x="190" y="80" class="beam-label">viga / losa rígida</text>
+            </svg>
+            <p>Columnas en paralelo: todos los aportes se suman en el entrepiso.</p>
+          </div>
+
+          <div class="contribution-card">
+            <div class="subheading"><h3>Aporte por grupo</h3><span id="contribution-count">—</span></div>
+            <div id="contribution-list" class="contribution-list"></div>
+          </div>
+
+          <div class="calculation-card">
+            <div class="section-heading section-heading--small">
+              <span class="step-number">02</span><div><h2>Cálculo paso a paso</h2><p>Valores listos para contrastar manualmente.</p></div>
+            </div>
+            <p id="height-conversion" class="height-conversion">h = 3,00 m</p>
+            <div id="steps-list" class="steps-list"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="page-shell theory-section">
+        <div class="theory-title"><span aria-hidden="true">▤</span><div><p class="eyebrow">FUNDAMENTO Y ALCANCE</p><h2>Qué representa este resultado</h2></div></div>
+        <div class="theory-grid">
+          <article><span>01</span><h3>Modelo de corte</h3><p>Se impone un desplazamiento lateral unitario y la viga o losa no se deforma a flexión. Cada columna funciona como un resorte lateral.</p></article>
+          <article><span>02</span><h3>Sección bruta</h3><p>Se usa I = a⁴/12 para la sección cuadrada e I = πD⁴/64 para la circular maciza.</p></article>
+          <article><span>03</span><h3>Alcance actual</h3><p>Es una idealización elástica inicial. El modelo global deberá incorporar vigas reales, torsión, segundo orden y las exigencias de la E.030.</p></article>
+        </div>
+        <div class="reference-row">
+          <p>Basado en <a href="https://sites.google.com/view/rigidez-lateral/in%C3%ADcio" target="_blank" rel="noreferrer">Rigidez Lateral ↗</a>, con E<sub>c</sub> = 4 700√f′c en SI y 15 000√f′c en MKS.</p>
+          <span>Uso educativo · Requiere revisión de un ingeniero estructural</span>
+        </div>
+      </section>
+
+      <footer><div class="page-shell"><span>SismoLab · Desarrollo progresivo para análisis sísmico E.030</span><span>Motor de cálculo Python · columnas cuadradas y circulares</span></div></footer>
+    </main>
+    <script type="py" src="./app.py" config="./pyscript.toml"></script>
+  </body>
+</html>

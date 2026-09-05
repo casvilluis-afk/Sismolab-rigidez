@@ -1,0 +1,5 @@
+name = "SismoLab - Rigidez lateral"
+description = "Calculadora de rigidez lateral de columnas cuadradas y circulares"
+
+[files]
+"./stiffness.py" = "./stiffness.py"
