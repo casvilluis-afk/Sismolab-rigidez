@@ -15,21 +15,20 @@ from typing import Literal
 UnitSystem = Literal["SI", "MKS"]
 SectionShape = Literal["square", "circle"]
 JointType = Literal["fixed", "pinned"]
-MaterialType = Literal["concrete", "steel", "masonry"]
+MaterialType = Literal["concrete", "steel"]
 Direction = Literal["X", "Y"]
 
 MPA_TO_KGF_CM2 = 10.1971621298
 
 # Módulo elástico del acero: prácticamente constante en el rango elástico,
-# a diferencia del concreto o la albañilería (no depende de una resistencia
-# de diseño ingresada por el usuario).
+# a diferencia del concreto (no depende de una resistencia ingresada por
+# el usuario).
 STEEL_MODULUS_SI = 200_000.0  # MPa
 STEEL_MODULUS_MKS = 2_039_000.0  # kgf/cm² (≈ 200 000 MPa)
 
 MATERIAL_LABELS: dict[MaterialType, str] = {
     "concrete": "Concreto armado",
     "steel": "Acero estructural",
-    "masonry": "Albañilería",
 }
 
 DIRECTION_LABELS: dict[Direction, str] = {
@@ -82,8 +81,8 @@ def validate_group(group: ColumnGroup) -> None:
         raise ValueError("La sección debe ser cuadrada o circular.")
     if group.base not in ("fixed", "pinned") or group.top not in ("fixed", "pinned"):
         raise ValueError("La condición de apoyo no es válida.")
-    if group.material not in ("concrete", "steel", "masonry"):
-        raise ValueError("El material debe ser concreto, acero o albañilería.")
+    if group.material not in ("concrete", "steel"):
+        raise ValueError("El material debe ser concreto o acero.")
     if group.direction not in ("X", "Y"):
         raise ValueError("La dirección debe ser X o Y.")
     _positive_number(group.dimension, "La dimensión")
@@ -117,8 +116,6 @@ def direction_label(direction: Direction) -> str:
 
 def resistance_label(material: MaterialType) -> str:
     """Nombre del parámetro de resistencia según el material."""
-    if material == "masonry":
-        return "f′m"
     if material == "steel":
         return "fy (referencial)"
     return "f′c"
@@ -126,8 +123,6 @@ def resistance_label(material: MaterialType) -> str:
 
 def resistance_bounds(material: MaterialType, units: UnitSystem) -> tuple[str, str, str]:
     """(min, max, step) sugeridos para el campo de resistencia, como texto."""
-    if material == "masonry":
-        return ("2", "20", "0.1") if units == "SI" else ("20", "200", "1")
     if material == "steel":
         return ("100", "600", "1") if units == "SI" else ("1000", "6000", "10")
     return ("10", "100", "0.1") if units == "SI" else ("100", "1000", "1")
@@ -149,13 +144,9 @@ def elastic_modulus(material: MaterialType, fc: float, units: UnitSystem) -> flo
         # El módulo del acero es prácticamente constante en el rango elástico.
         return STEEL_MODULUS_SI if units == "SI" else STEEL_MODULUS_MKS
     fc = _positive_number(fc, "La resistencia")
-    if material == "masonry":
-        # E.070 (Perú): Em = 500 · f'm, aplicado de forma simplificada en
-        # ambos sistemas de unidades para fines educativos.
-        return 500.0 * fc
     if material == "concrete":
         return (4_700.0 if units == "SI" else 15_000.0) * sqrt(fc)
-    raise ValueError("El material debe ser concreto, acero o albañilería.")
+    raise ValueError("El material debe ser concreto o acero.")
 
 
 def calculate_group(
@@ -225,3 +216,4 @@ def convert_group_units(group: ColumnGroup, source: UnitSystem, target: UnitSyst
     else:
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
     return ColumnGroup(**{**asdict(group), "dimension": dimension, "fc": fc})
+    
