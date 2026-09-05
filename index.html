@@ -78,14 +78,19 @@
         <section class="result-panel" aria-labelledby="resultado-heading">
           <div class="result-card">
             <div class="result-card__top">
-              <div><span class="result-kicker">RESULTADO DEL ENTREPISO</span><h2 id="resultado-heading">Rigidez lateral total</h2></div>
+              <div><span class="result-kicker">RESULTADO DEL ENTREPISO</span><h2 id="resultado-heading">Rigidez lateral por dirección</h2></div>
               <span class="live-pill">Cálculo en vivo</span>
             </div>
-            <output class="total-result" aria-live="polite">
-              <span>k<sub>ent</sub></span><strong id="total-stiffness">—</strong><em id="stiffness-unit">kN/m</em>
-            </output>
+            <div class="total-grid">
+              <output class="total-result" aria-live="polite">
+                <span>k<sub>x</sub></span><strong id="total-stiffness-x">—</strong><em id="stiffness-unit-x">kN/m</em>
+              </output>
+              <output class="total-result" aria-live="polite">
+                <span>k<sub>y</sub></span><strong id="total-stiffness-y">—</strong><em id="stiffness-unit-y">kN/m</em>
+              </output>
+            </div>
             <div id="calculation-warning" class="calculation-warning" hidden></div>
-            <div class="formula-bar"><b>Σ</b><span>k<sub>ent</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³</span></div>
+            <div class="formula-bar"><b>Σ</b><span>k<sub>x</sub> ó k<sub>y</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³ (solo columnas asignadas a ese eje)</span></div>
           </div>
 
           <div class="frame-diagram">
@@ -127,7 +132,7 @@
           <article><span>03</span><h3>Alcance actual</h3><p>Es una idealización elástica inicial. El modelo global deberá incorporar vigas reales, torsión, segundo orden y las exigencias de la E.030.</p></article>
         </div>
         <div class="reference-row">
-          <p>Basado en <a href="https://sites.google.com/view/rigidez-lateral/in%C3%ADcio" target="_blank" rel="noreferrer">Rigidez Lateral ↗</a>, con E<sub>c</sub> = 4 700√f′c en SI y 15 000√f′c en MKS.</p>
+          <p>Basado en <a href="https://sites.google.com/view/rigidez-lateral/in%C3%ADcio" target="_blank" rel="noreferrer">Rigidez Lateral ↗</a>. Concreto: E<sub>c</sub> = 4 700√f′c (SI) / 15 000√f′c (MKS). Albañilería: E<sub>m</sub> = 500·f′m. Acero: E constante ≈ 200 000 MPa.</p>
           <span>Uso educativo · Requiere revisión de un ingeniero estructural</span>
         </div>
       </section>
