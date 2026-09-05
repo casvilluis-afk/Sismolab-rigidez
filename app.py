@@ -9,10 +9,16 @@ from pyscript import document, when
 
 from stiffness import (
     ColumnGroup,
+    STEEL_MODULUS_MKS,
+    STEEL_MODULUS_SI,
     boundary_description,
     boundary_factor,
     calculate_story,
     convert_group_units,
+    direction_label,
+    material_label,
+    resistance_bounds,
+    resistance_label,
 )
 
 
@@ -28,6 +34,8 @@ groups = [
         fc=21.0,
         base="fixed",
         top="fixed",
+        material="concrete",
+        direction="X",
     )
 ]
 
@@ -98,9 +106,6 @@ def group_card(group: ColumnGroup, index: int) -> str:
     dimension_min = "100" if units == "SI" else "10"
     dimension_max = "2000" if units == "SI" else "200"
     dimension_step = "10" if units == "SI" else "1"
-    fc_min = "10" if units == "SI" else "100"
-    fc_max = "100" if units == "SI" else "1000"
-    fc_step = "0.1" if units == "SI" else "1"
     remove_button = (
         f'<button type="button" class="button remove-button" data-action="remove" data-id="{group.id}" '
         f'aria-label="Eliminar grupo C{index + 1}">×</button>'
@@ -114,10 +119,53 @@ def group_card(group: ColumnGroup, index: int) -> str:
     top_fixed = " selected" if group.top == "fixed" else ""
     top_pinned = " selected" if group.top == "pinned" else ""
 
+    concrete_selected = " is-selected" if group.material == "concrete" else ""
+    steel_selected = " is-selected" if group.material == "steel" else ""
+    masonry_selected = " is-selected" if group.material == "masonry" else ""
+    dir_x_selected = " is-selected" if group.direction == "X" else ""
+    dir_y_selected = " is-selected" if group.direction == "Y" else ""
+
+    material_options = f"""
+      <fieldset class="field-block shape-field">
+        <legend>Material</legend>
+        <div class="shape-options shape-options--triple">
+          <button type="button" class="shape-option{concrete_selected}" data-action="material" data-id="{group.id}" data-value="concrete">Concreto</button>
+          <button type="button" class="shape-option{steel_selected}" data-action="material" data-id="{group.id}" data-value="steel">Acero</button>
+          <button type="button" class="shape-option{masonry_selected}" data-action="material" data-id="{group.id}" data-value="masonry">Albañilería</button>
+        </div>
+      </fieldset>
+      <fieldset class="field-block shape-field">
+        <legend>Dirección del sismo</legend>
+        <div class="shape-options">
+          <button type="button" class="shape-option{dir_x_selected}" data-action="direction" data-id="{group.id}" data-value="X">Eje X</button>
+          <button type="button" class="shape-option{dir_y_selected}" data-action="direction" data-id="{group.id}" data-value="Y">Eje Y</button>
+        </div>
+      </fieldset>
+    """
+
+    if group.material == "steel":
+        steel_modulus = STEEL_MODULUS_SI if units == "SI" else STEEL_MODULUS_MKS
+        resistance_field = f"""
+        <div class="field-block">
+          <label>Módulo elástico E</label>
+          <div class="input-with-unit"><input type="text" value="{format_number(steel_modulus, 0)}" disabled /><span>{labels['fc']}</span></div>
+          <small>Constante para acero estructural: no depende de una resistencia ingresada.</small>
+        </div>
+        """
+    else:
+        resistance_name = resistance_label(group.material)
+        fc_min, fc_max, fc_step = resistance_bounds(group.material, units)
+        resistance_field = f"""
+        <div class="field-block">
+          <label for="fc-{group.id}">Resistencia {resistance_name}</label>
+          <div class="input-with-unit"><input id="fc-{group.id}" type="number" min="{fc_min}" max="{fc_max}" step="{fc_step}" value="{input_number(group.fc)}" data-group="{group.id}" data-field="fc" /><span>{labels['fc']}</span></div>
+        </div>
+        """
+
     return f"""
     <article class="column-card" data-card-id="{group.id}">
       <div class="column-card__head">
-        <div><span class="column-code">C{index + 1}</span><div><h3>Grupo de columnas {index + 1}</h3><p>Mismas dimensiones, material y apoyos</p></div></div>
+        <div><span class="column-code">C{index + 1}</span><div><h3>Grupo de columnas {index + 1}</h3><p>{material_label(group.material)} · {direction_label(group.direction)}</p></div></div>
         {remove_button}
       </div>
       <div class="form-grid form-grid--compact">
@@ -133,15 +181,13 @@ def group_card(group: ColumnGroup, index: int) -> str:
           </div>
         </fieldset>
       </div>
+      {material_options}
       <div class="form-grid">
         <div class="field-block">
           <label for="dimension-{group.id}">{dimension_label}</label>
           <div class="input-with-unit"><input id="dimension-{group.id}" type="number" min="{dimension_min}" max="{dimension_max}" step="{dimension_step}" value="{input_number(group.dimension)}" data-group="{group.id}" data-field="dimension" /><span>{labels['dimension']}</span></div>
         </div>
-        <div class="field-block">
-          <label for="fc-{group.id}">Resistencia f′c</label>
-          <div class="input-with-unit"><input id="fc-{group.id}" type="number" min="{fc_min}" max="{fc_max}" step="{fc_step}" value="{input_number(group.fc)}" data-group="{group.id}" data-field="fc" /><span>{labels['fc']}</span></div>
-        </div>
+        {resistance_field}
       </div>
       <div class="form-grid">
         <div class="field-block">
@@ -170,19 +216,29 @@ def section_diagram(shape: str) -> str:
     return f'<div class="section-diagram"><div class="{shape_class}">{symbol}</div><span class="axis-line"></span><span class="axis-label">eje de flexión</span></div>'
 
 
-def contribution_row(group: ColumnGroup, calculation: dict, index: int, total: float) -> str:
-    percent = calculation["contribution"] / total * 100.0 if total > 0 else 0.0
+def contribution_row(group: ColumnGroup, calculation: dict, index: int, direction_total: float) -> str:
+    percent = calculation["contribution"] / direction_total * 100.0 if direction_total > 0 else 0.0
     circle_class = " circle" if group.shape == "circle" else ""
     return f"""
       <div class="contribution-row">
         <div class="contribution-symbol"><span class="shape-symbol{circle_class}"></span></div>
         <div class="contribution-main">
-          <div><strong>C{index + 1}</strong><span>{group.quantity} × {shape_name(group.shape)}</span><em>{format_number(percent, 1)}%</em></div>
+          <div><strong>C{index + 1}</strong><span>{group.quantity} × {shape_name(group.shape)} · {material_label(group.material)}</span><em>{format_number(percent, 1)}%</em></div>
           <div class="progress-track"><span style="width:{min(100.0, percent):.2f}%"></span></div>
         </div>
         <b>{format_number(calculation['contribution'])}<small>{calculation['stiffness_unit']}</small></b>
       </div>
     """
+
+
+def modulus_step_text(group: ColumnGroup, calculation: dict) -> str:
+    modulus_value = f"{format_number(calculation['elastic_modulus'])} {calculation['modulus_unit']}"
+    if group.material == "steel":
+        return f"E = <b>{modulus_value}</b> (constante del acero, no depende de f′c)"
+    if group.material == "masonry":
+        return f"E = 500 · f′m = 500 · {format_number(group.fc)} = <b>{modulus_value}</b>"
+    modulus_factor = "4.700" if units == "SI" else "15.000"
+    return f"E = {modulus_factor} · √{format_number(group.fc)} = <b>{modulus_value}</b>"
 
 
 def calculation_step(group: ColumnGroup, calculation: dict, index: int) -> str:
@@ -192,20 +248,19 @@ def calculation_step(group: ColumnGroup, calculation: dict, index: int) -> str:
         if group.shape == "square"
         else f"π · {format_number(group.dimension)}⁴ / 64"
     )
-    modulus_factor = "4.700" if units == "SI" else "15.000"
     factor = calculation["factor"]
     stiffness_formula = "0" if factor == 0 else f"{int(factor)}EI/h³"
     open_attribute = " open" if index == 0 else ""
     return f"""
       <details class="step-detail"{open_attribute}>
-        <summary><span>C{index + 1}</span><div><strong>Sección {shape_name(group.shape)} × {group.quantity}</strong><small>{support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
+        <summary><span>C{index + 1}</span><div><strong>Sección {shape_name(group.shape)} × {group.quantity}</strong><small>{material_label(group.material)} · {direction_label(group.direction)} · {support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
         <div class="step-content">
           {section_diagram(group.shape)}
           <ol>
-            <li><span>1</span><div><strong>Módulo elástico del concreto</strong><p>E = {modulus_factor} · √{format_number(group.fc)} = <b>{format_number(calculation['elastic_modulus'])} {calculation['modulus_unit']}</b></p></div></li>
+            <li><span>1</span><div><strong>Módulo elástico del material</strong><p>{modulus_step_text(group, calculation)}</p></div></li>
             <li><span>2</span><div><strong>Momento de inercia bruto</strong><p>I = {inertia_formula} = {inertia_substitution} = <b>{format_number(calculation['inertia'])} {calculation['inertia_unit']}</b></p></div></li>
             <li><span>3</span><div><strong>Rigidez de una columna</strong><p>k = {stiffness_formula} = <b>{format_number(calculation['stiffness_per_column'])} {calculation['stiffness_unit']}</b></p></div></li>
-            <li><span>4</span><div><strong>Aporte del grupo</strong><p>{group.quantity} · {format_number(calculation['stiffness_per_column'])} = <b>{format_number(calculation['contribution'])} {calculation['stiffness_unit']}</b></p></div></li>
+            <li><span>4</span><div><strong>Aporte al eje {group.direction}</strong><p>{group.quantity} · {format_number(calculation['stiffness_per_column'])} = <b>{format_number(calculation['contribution'])} {calculation['stiffness_unit']}</b></p></div></li>
           </ol>
         </div>
       </details>
@@ -220,7 +275,8 @@ def show_warning(message: str | None) -> None:
 
 def render_results() -> None:
     labels = unit_labels()
-    by_id("stiffness-unit").textContent = labels["stiffness"]
+    by_id("stiffness-unit-x").textContent = labels["stiffness"]
+    by_id("stiffness-unit-y").textContent = labels["stiffness"]
     by_id("frame-height").textContent = f"{format_number(story_height, 2)} m"
     height_in_units = story_height * (1_000 if units == "SI" else 100)
     by_id("height-conversion").innerHTML = (
@@ -229,19 +285,21 @@ def render_results() -> None:
     try:
         result = calculate_story(groups, story_height, units)
     except ValueError as error:
-        by_id("total-stiffness").textContent = "—"
+        by_id("total-stiffness-x").textContent = "—"
+        by_id("total-stiffness-y").textContent = "—"
         by_id("contribution-count").textContent = f"{len(groups)} grupo(s)"
         by_id("contribution-list").innerHTML = ""
         by_id("steps-list").innerHTML = ""
         show_warning(str(error))
         return
 
-    total = float(result["total"])
+    totals = result["totals"]
     calculations = result["groups"]
-    by_id("total-stiffness").textContent = format_number(total)
+    by_id("total-stiffness-x").textContent = format_number(totals["X"])
+    by_id("total-stiffness-y").textContent = format_number(totals["Y"])
     by_id("contribution-count").textContent = f"{len(groups)} grupo(s)"
     by_id("contribution-list").innerHTML = "".join(
-        contribution_row(group, calculations[index], index, total)
+        contribution_row(group, calculations[index], index, totals[group.direction])
         for index, group in enumerate(groups)
     )
     by_id("steps-list").innerHTML = "".join(
@@ -288,6 +346,8 @@ def add_group() -> None:
             fc=21.0 if units == "SI" else 210.0,
             base="fixed",
             top="fixed",
+            material="concrete",
+            direction="X",
         )
     )
     next_group_number += 1
@@ -300,7 +360,7 @@ def reset() -> None:
     units = "SI"
     story_height = 3.0
     next_group_number = 2
-    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed")]
+    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X")]
     by_id("story-height").value = "3"
     render_unit_toggle()
     render_groups()
@@ -330,6 +390,20 @@ def handle_click(event):
         group = get_group(group_id)
         if group is not None:
             group.shape = str(action_element.getAttribute("data-value"))
+            render_groups()
+            render_results()
+    elif action == "material":
+        group_id = str(action_element.getAttribute("data-id"))
+        group = get_group(group_id)
+        if group is not None:
+            group.material = str(action_element.getAttribute("data-value"))
+            render_groups()
+            render_results()
+    elif action == "direction":
+        group_id = str(action_element.getAttribute("data-id"))
+        group = get_group(group_id)
+        if group is not None:
+            group.direction = str(action_element.getAttribute("data-value"))
             render_groups()
             render_results()
 
