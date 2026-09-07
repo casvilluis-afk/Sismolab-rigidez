@@ -314,6 +314,41 @@ select { padding: 8px 10px; }
 .analysis-cr { fill: var(--violet); stroke: white; stroke-width: 2; }
 .analysis-cr-label { fill: #4b4da0; font-family: var(--mono); font-size: 11px; font-weight: 800; }
 .analysis-grid-line { stroke: #d5dfdd; stroke-width: 1; stroke-dasharray: 4 4; }
+
+.subheading--with-control { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.viz-control { display: flex; align-items: center; gap: 8px; }
+.viz-control label { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.viz-control select { height: 34px; padding: 0 10px; color: var(--ink); background: #fcfdfd; border: 1px solid var(--border); border-radius: 7px; font-weight: 700; font-size: 12px; }
+.viz-caption { margin: 8px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
+
+.deform-plan-original { fill: none; stroke: var(--border); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.deform-plan-shifted { fill: rgba(217,137,37,.12); stroke: var(--amber); stroke-width: 2.2; }
+.deform-cm-line { stroke: var(--violet); stroke-width: 2; }
+.deform-cm-shifted { fill: var(--violet); stroke: white; stroke-width: 3; }
+.deform-shifted-label { fill: #4b4da0; font-family: var(--mono); font-size: 11px; font-weight: 800; }
+.deform-arrowhead { fill: var(--violet); }
+
+.deform-axo-slab-base { fill: none; stroke: var(--border); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.deform-axo-slab { fill: rgba(217,137,37,.1); stroke: var(--amber); stroke-width: 2; stroke-linejoin: round; }
+.deform-axo-column { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
+.deform-axo-label { fill: var(--muted); font-family: var(--mono); font-size: 10px; font-weight: 700; }
+
+.analysis-elevation { min-height: 300px; display: grid; place-items: center; overflow: hidden; background: #f8fbfa; border: 1px solid #e0e8e6; border-radius: 9px; }
+.analysis-elevation svg { width: 100%; height: auto; max-height: 340px; display: block; }
+.deform-elev-reference { stroke: var(--border); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.deform-elev-column { stroke: var(--amber); stroke-width: 3; stroke-linecap: round; }
+.deform-elev-node { fill: var(--amber); stroke: white; stroke-width: 2; }
+.deform-elev-label { fill: var(--ink); font-family: var(--mono); font-size: 10px; font-weight: 700; }
+
+.analysis-chart { min-height: 100px; overflow-x: auto; background: #f8fbfa; border: 1px solid #e0e8e6; border-radius: 9px; padding: 6px 4px; }
+.analysis-chart svg { display: block; width: 100%; height: auto; }
+.chart-row-label { fill: var(--ink); font-family: var(--mono); font-size: 10.5px; font-weight: 700; }
+.chart-value-label { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.chart-bar-teal { fill: var(--teal); }
+.chart-bar-amber { fill: var(--amber); }
+.chart-bar-violet { fill: var(--violet); }
+.chart-bar-negative { fill: var(--danger); }
+
 .analysis-table-card h3 { margin: 0 0 5px; font-size: 16px; }
 .analysis-table-card > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }

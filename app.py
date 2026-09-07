@@ -35,6 +35,8 @@ analysis_cm_x = 2.5
 analysis_cm_y = 2.0
 analysis_ecc_x = 0.0
 analysis_ecc_y = 0.0
+analysis_view_level = None
+analysis_selected_axis_id = None
 groups = [
     ColumnGroup(
         id="c1",
@@ -736,13 +738,23 @@ def render_frame_diagram() -> None:
         ]
     )
 
-    dim_base = point(min_grid_x - 0.7, min_grid_y, 0)
-    dim_top = point(min_grid_x - 0.7, min_grid_y, 1)
+    # La cota "h" se ubica a partir del punto más a la izquierda ya dibujado
+    # (en coordenadas de pantalla), no de un offset fijo en la grilla. Con
+    # varias estaciones en profundidad, la proyección isométrica desplaza las
+    # columnas del fondo mucho más a la izquierda que un offset fijo podía
+    # prever, y la cota terminaba superpuesta con ellas.
+    reference_base = point(min_grid_x, min_grid_y, 0)
+    reference_top = point(min_grid_x, min_grid_y, 1)
+    dim_x = min(x for x, _ in bbox) - 34.0
+    dim_base = (dim_x, reference_base[1])
+    dim_top = (dim_x, reference_top[1])
+    bbox.append(dim_base)
+    bbox.append(dim_top)
     parts.append(
         f'<path class="iso-dim" d="M{dim_base[0]:.1f} {dim_base[1]:.1f} L{dim_top[0]:.1f} {dim_top[1]:.1f}"/>'
     )
     parts.append(
-        f'<text class="iso-dim-label" x="{dim_top[0] - 7:.1f}" y="{(dim_base[1] + dim_top[1]) / 2:.1f}" '
+        f'<text class="iso-dim-label" x="{dim_x - 7:.1f}" y="{(dim_base[1] + dim_top[1]) / 2:.1f}" '
         f'text-anchor="end">h = {format_number(story_height, 2)} m</text>'
     )
 
@@ -1004,6 +1016,323 @@ def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
     return f'<table class="matrix-table"><thead><tr><th>GDL</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
 
 
+def _update_matrix_panel(html: str) -> None:
+    """Actualiza el contenido de 'ver detalle' preservando si estaba abierto.
+
+    Revisión de código: ningún renderizado actual reemplaza el propio nodo
+    <details>, solo el <div> interior, así que un cierre del panel no debería
+    depender de esto. Aun así, se deja como blindaje explícito: si por
+    cualquier motivo (orden de eventos del navegador, remount de PyScript,
+    etc.) el estado se perdiera, este helper lo restaura en el mismo ciclo.
+    """
+    details = document.querySelector(".matrix-card")
+    was_open = False
+    if hasattr(details, "open"):
+        was_open = bool(details.open)
+    by_id("analysis-matrix").innerHTML = html
+    if hasattr(details, "open"):
+        details.open = was_open
+
+
+def _footprint_bounds() -> tuple[float, float, float, float]:
+    """Rectángulo simplificado que envuelve todos los ejes resistentes."""
+    xs = [float(group.x0) for group in groups]
+    ys = [float(group.y0) for group in groups]
+    pad = 1.3
+    min_x, max_x = min(xs) - pad, max(xs) + pad
+    min_y, max_y = min(ys) - pad, max(ys) + pad
+    if max_x - min_x < 1.0:
+        center = (max_x + min_x) / 2.0
+        min_x, max_x = center - 1.5, center + 1.5
+    if max_y - min_y < 1.0:
+        center = (max_y + min_y) / 2.0
+        min_y, max_y = center - 1.5, center + 1.5
+    return min_x, max_x, min_y, max_y
+
+
+def _deformation_amplifier(displacements: list[dict], footprint_size: float) -> float:
+    """Factor de amplificación visual: el máximo desplazamiento real (mm)
+    ocuparía un pixel en el dibujo, así que se agranda para que se note.
+    """
+    max_disp = max(
+        (max(abs(item["ux"]), abs(item["uy"])) for item in displacements),
+        default=0.0,
+    )
+    if max_disp <= 1e-9:
+        return 1.0
+    target = max(0.5, footprint_size * 0.2)
+    return max(1.0, target / max_disp)
+
+
+def _rigid_diaphragm_offset(
+    px: float, py: float, cm_x: float, cm_y: float, ux: float, uy: float, theta: float
+) -> tuple[float, float]:
+    """Campo de desplazamientos de un diafragma rígido (aprox. lineal en θ):
+    u(x,y) = ux − θ(y − y_cm) ; v(x,y) = uy + θ(x − x_cm)."""
+    dx, dy = px - cm_x, py - cm_y
+    return ux - theta * dy, uy + theta * dx
+
+
+def _deformed_plan_svg(result: dict, level_index: int) -> str:
+    """Planta original (punteada) vs. planta desplazada y rotada (sólida)
+    para el nivel elegido, con amplificación visual del movimiento."""
+    displacements = result["displacements"]
+    if not (0 <= level_index < len(displacements)):
+        level_index = len(displacements) - 1
+    item = displacements[level_index]
+    min_x, max_x, min_y, max_y = _footprint_bounds()
+    footprint_size = max(max_x - min_x, max_y - min_y, 1.0)
+    scale = _deformation_amplifier(displacements, footprint_size)
+
+    corners = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+    shifted_corners = []
+    for px, py in corners:
+        ox, oy = _rigid_diaphragm_offset(
+            px, py, analysis_cm_x, analysis_cm_y, item["ux"], item["uy"], item["theta"]
+        )
+        shifted_corners.append((px + ox * scale, py + oy * scale))
+    cm_ox, cm_oy = _rigid_diaphragm_offset(
+        analysis_cm_x, analysis_cm_y, analysis_cm_x, analysis_cm_y, item["ux"], item["uy"], item["theta"]
+    )
+    shifted_cm = (analysis_cm_x + cm_ox * scale, analysis_cm_y + cm_oy * scale)
+
+    all_points = corners + shifted_corners + [(analysis_cm_x, analysis_cm_y), shifted_cm]
+    xs = [p[0] for p in all_points]
+    ys = [p[1] for p in all_points]
+    pad = max(1.0, footprint_size * 0.12)
+    view_min_x, view_max_x = min(xs) - pad, max(xs) + pad
+    view_min_y, view_max_y = min(ys) - pad, max(ys) + pad
+
+    def map_point(x_value: float, y_value: float) -> tuple[float, float]:
+        px = 44.0 + (x_value - view_min_x) / (view_max_x - view_min_x) * 432.0
+        py = 260.0 - (y_value - view_min_y) / (view_max_y - view_min_y) * 220.0
+        return px, py
+
+    original_pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in (map_point(*p) for p in corners))
+    shifted_pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in (map_point(*p) for p in shifted_corners))
+    cm0 = map_point(analysis_cm_x, analysis_cm_y)
+    cm1 = map_point(*shifted_cm)
+
+    parts = [
+        '<svg viewBox="0 0 520 300" role="img" aria-label="Planta original y planta deformada">',
+        '<rect x="44" y="32" width="432" height="228" rx="6" fill="white" stroke="#e4ebe9"/>',
+        f'<polygon class="deform-plan-original" points="{original_pts}"/>',
+        f'<polygon class="deform-plan-shifted" points="{shifted_pts}"/>',
+        f'<line class="deform-cm-line" x1="{cm0[0]:.1f}" y1="{cm0[1]:.1f}" x2="{cm1[0]:.1f}" y2="{cm1[1]:.1f}" marker-end="url(#deformArrow)"/>',
+        f'<circle class="analysis-cm" cx="{cm0[0]:.1f}" cy="{cm0[1]:.1f}" r="6"/>',
+        f'<circle class="deform-cm-shifted" cx="{cm1[0]:.1f}" cy="{cm1[1]:.1f}" r="6"/>',
+        f'<text class="analysis-cm-label" x="{cm0[0] + 10:.1f}" y="{cm0[1] - 8:.1f}">CM</text>',
+        f'<text class="deform-shifted-label" x="{cm1[0] + 10:.1f}" y="{cm1[1] + 16:.1f}">CM\'</text>',
+        "<defs><marker id=\"deformArrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\">"
+        '<path class="deform-arrowhead" d="M0,0 L7,3.5 L0,7 Z"/></marker></defs>',
+        "</svg>",
+    ]
+    return "".join(parts), scale
+
+
+def _deformed_axonometric_svg(result: dict) -> tuple[str, float]:
+    """Vista axonométrica de la retícula completa, mostrando la inclinación
+    progresiva de cada nivel (modelo de corte apilado)."""
+    displacements = result["displacements"]
+    heights = analysis_heights[: len(displacements)]
+    min_x, max_x, min_y, max_y = _footprint_bounds()
+    footprint_size = max(max_x - min_x, max_y - min_y, 1.0)
+    scale = _deformation_amplifier(displacements, footprint_size)
+    footprint = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+
+    iso_mx = (15.5, -8.4)
+    iso_my = (-11.2, -6.6)
+    px_per_meter_h = 27.0
+    bbox: list[tuple[float, float]] = []
+
+    def project(x_m: float, y_m: float, cum_height: float, disp_x: float, disp_y: float) -> tuple[float, float]:
+        eff_x = x_m + disp_x * scale
+        eff_y = y_m + disp_y * scale
+        sx = eff_x * iso_mx[0] + eff_y * iso_my[0]
+        sy = eff_x * iso_mx[1] + eff_y * iso_my[1] - cum_height * px_per_meter_h
+        bbox.append((sx, sy))
+        return sx, sy
+
+    levels_data = [(0.0, 0.0, 0.0)]
+    cumulative = 0.0
+    for index, item in enumerate(displacements):
+        cumulative += heights[index] if index < len(heights) else 0.0
+        levels_data.append((item["ux"], item["uy"], cumulative))
+
+    slabs = [
+        [project(px, py, cum_h, dux, duy) for px, py in footprint]
+        for dux, duy, cum_h in levels_data
+    ]
+
+    parts: list[str] = []
+    for corner_index in range(4):
+        for level_index in range(1, len(slabs)):
+            x1, y1 = slabs[level_index - 1][corner_index]
+            x2, y2 = slabs[level_index][corner_index]
+            parts.append(f'<line class="deform-axo-column" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}"/>')
+
+    for level_index, pts in enumerate(slabs):
+        css_class = "deform-axo-slab-base" if level_index == 0 else "deform-axo-slab"
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+        parts.append(f'<polygon class="{css_class}" points="{points}"/>')
+        if level_index > 0:
+            label_point = pts[3]
+            parts.append(
+                f'<text class="deform-axo-label" x="{label_point[0] - 9:.1f}" y="{label_point[1] + 3:.1f}" '
+                f'text-anchor="end">N{level_index}</text>'
+            )
+
+    padding = 32.0
+    min_bx = min(x for x, _ in bbox) - padding
+    max_bx = max(x for x, _ in bbox) + padding
+    min_by = min(y for _, y in bbox) - padding
+    max_by = max(y for _, y in bbox) + padding
+    svg = (
+        f'<svg viewBox="{min_bx:.1f} {min_by:.1f} {max_bx - min_bx:.1f} {max_by - min_by:.1f}" '
+        'role="img" aria-label="Vista axonométrica de la forma deformada">'
+        + "".join(parts)
+        + "</svg>"
+    )
+    return svg, scale
+
+
+def _frame_elevation_svg(result: dict, group_id: str | None) -> str:
+    """Elevación 2D de un pórtico: forma deformada del modelo de corte
+    (desplazamiento lateral acumulado por nivel) contra la referencia vertical."""
+    frame = next((item for item in result["frames"] if str(item["id"]) == str(group_id)), None)
+    if frame is None:
+        return '<p class="matrix-caption">Selecciona un eje para ver su elevación.</p>'
+
+    local = frame["local_displacements"]
+    heights = analysis_heights[: len(local)]
+    total_height = sum(heights) or 1.0
+    max_disp = max((abs(value) for value in local), default=0.0)
+    target_px = 78.0
+    x_scale = target_px / max_disp if max_disp > 1e-9 else 0.0
+    px_per_meter_h = min(60.0, max(28.0, 260.0 / total_height))
+
+    axis_x0 = 130.0
+    nodes = [(axis_x0, 0.0)]
+    cumulative = 0.0
+    for index, value in enumerate(local):
+        cumulative += heights[index] if index < len(heights) else 0.0
+        nodes.append((axis_x0 + value * x_scale, cumulative * px_per_meter_h))
+
+    def sy(height_value: float) -> float:
+        return 268.0 - height_value
+
+    parts = [
+        '<svg viewBox="0 0 260 300" role="img" aria-label="Elevación deformada del pórtico seleccionado">',
+        f'<line class="deform-elev-reference" x1="{axis_x0:.1f}" y1="{sy(0):.1f}" x2="{axis_x0:.1f}" y2="{sy(nodes[-1][1]):.1f}"/>',
+    ]
+    for index in range(len(nodes) - 1):
+        x1, h1 = nodes[index]
+        x2, h2 = nodes[index + 1]
+        parts.append(
+            f'<line class="deform-elev-column" x1="{x1:.1f}" y1="{sy(h1):.1f}" x2="{x2:.1f}" y2="{sy(h2):.1f}"/>'
+        )
+    parts.append(f'{_iso_footing(axis_x0, sy(0))}')
+    for index, (x_pos, h_pos) in enumerate(nodes):
+        parts.append(f'<circle class="deform-elev-node" cx="{x_pos:.1f}" cy="{sy(h_pos):.1f}" r="4.5"/>')
+        if index > 0:
+            drift_mm = local[index - 1] * 1000.0
+            parts.append(
+                f'<text class="deform-elev-label" x="{x_pos + 9:.1f}" y="{sy(h_pos) + 4:.1f}">'
+                f'N{index} · {format_number(drift_mm, 2)} mm</text>'
+            )
+        else:
+            parts.append(f'<text class="deform-elev-label" x="{x_pos + 9:.1f}" y="{sy(h_pos) + 4:.1f}">Base</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _bar_chart_svg(rows: list[tuple[str, float]], unit: str, bar_class: str = "chart-bar-teal") -> str:
+    """Gráfico de barras horizontales genérico para fuerzas, cortantes o momentos."""
+    if not rows:
+        return '<p class="matrix-caption">Sin datos para graficar.</p>'
+    max_value = max((abs(value) for _, value in rows), default=0.0) or 1.0
+    row_height = 30.0
+    chart_height = row_height * len(rows) + 16.0
+    label_width = 62.0
+    axis_x = label_width + 8.0
+    max_bar_width = 268.0
+    parts = [
+        f'<svg viewBox="0 0 {label_width + max_bar_width + 96.0:.0f} {chart_height:.0f}" role="img" aria-label="Gráfico de barras">'
+    ]
+    for index, (label, value) in enumerate(rows):
+        row_y = 10.0 + index * row_height
+        bar_width = max(1.5, (abs(value) / max_value) * max_bar_width)
+        css_class = bar_class if value >= 0 else "chart-bar-negative"
+        parts.append(
+            f'<text class="chart-row-label" x="{label_width - 8:.1f}" y="{row_y + 13:.1f}" text-anchor="end">{escape(label)}</text>'
+        )
+        parts.append(f'<rect class="{css_class}" x="{axis_x:.1f}" y="{row_y:.1f}" width="{bar_width:.1f}" height="18" rx="3"/>')
+        parts.append(
+            f'<text class="chart-value-label" x="{axis_x + bar_width + 8:.1f}" y="{row_y + 13:.1f}">{_compact_number(value)} {unit}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_deformation_views(result: dict) -> None:
+    """Puebla los selectores y dibuja planta deformada, axonometría y elevación."""
+    global analysis_view_level, analysis_selected_axis_id
+
+    if analysis_view_level is None or not (1 <= analysis_view_level <= analysis_level_count):
+        analysis_view_level = analysis_level_count
+    if analysis_selected_axis_id is None or not any(group.id == analysis_selected_axis_id for group in groups):
+        analysis_selected_axis_id = groups[0].id if groups else None
+
+    level_select = by_id("analysis-deform-level")
+    level_select.innerHTML = "".join(
+        f'<option value="{level}"{" selected" if level == analysis_view_level else ""}>Nivel {level}</option>'
+        for level in range(1, analysis_level_count + 1)
+    )
+
+    plan_svg, plan_scale = _deformed_plan_svg(result, analysis_view_level - 1)
+    by_id("analysis-deformed-plan").innerHTML = plan_svg
+    by_id("analysis-deformed-plan-caption").textContent = (
+        f"Nivel {analysis_view_level} · amplificación visual ×{format_number(plan_scale, 0)}"
+    )
+
+    axo_svg, axo_scale = _deformed_axonometric_svg(result)
+    by_id("analysis-axonometric").innerHTML = axo_svg
+    by_id("analysis-axonometric-caption").textContent = (
+        f"Amplificación visual ×{format_number(axo_scale, 0)} · alturas de piso a escala real"
+    )
+
+    axis_select = by_id("analysis-elevation-axis")
+    axis_select.innerHTML = "".join(
+        f'<option value="{group.id}"{" selected" if group.id == analysis_selected_axis_id else ""}>'
+        f"Eje {escape(str(group.axis))} · {escape(direction_label(group.direction))}</option>"
+        for group in groups
+    )
+    by_id("analysis-frame-elevation").innerHTML = _frame_elevation_svg(result, analysis_selected_axis_id)
+
+
+def render_action_charts(result: dict) -> None:
+    """Dibuja fuerzas por piso, cortante de piso y momentos en columna del eje elegido."""
+    levels = range(analysis_level_count - 1, -1, -1)
+
+    floor_rows = [(f"Nivel {level + 1}", analysis_forces[level]) for level in levels]
+    by_id("analysis-floor-forces-chart").innerHTML = _bar_chart_svg(floor_rows, "kN", "chart-bar-teal")
+
+    shear_rows = [(f"Nivel {level + 1}", sum(analysis_forces[level:])) for level in levels]
+    by_id("analysis-story-shear-chart").innerHTML = _bar_chart_svg(shear_rows, "kN", "chart-bar-amber")
+
+    frame = next(
+        (item for item in result["frames"] if str(item["id"]) == str(analysis_selected_axis_id)), None
+    )
+    if frame is not None and all(moment is not None for moment in frame["end_moments"]):
+        moment_rows = [(f"Nivel {level + 1}", frame["end_moments"][level]) for level in levels]
+        by_id("analysis-column-moment-chart").innerHTML = _bar_chart_svg(moment_rows, "kN·m", "chart-bar-violet")
+    else:
+        by_id("analysis-column-moment-chart").innerHTML = (
+            '<p class="matrix-caption">Este eje no tiene ambos extremos empotrado–rígido, '
+            "por lo que no se calcula el momento de extremo Vh/2.</p>"
+        )
+
+
 def _clear_analysis_results(message: str) -> None:
     warning = by_id("analysis-warning")
     warning.hidden = False
@@ -1013,7 +1342,16 @@ def _clear_analysis_results(message: str) -> None:
     )
     by_id("analysis-displacements").innerHTML = ""
     by_id("analysis-frames").innerHTML = ""
-    by_id("analysis-matrix").innerHTML = '<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>'
+    _update_matrix_panel('<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>')
+    placeholder = '<p class="matrix-caption">Disponible cuando el modelo tenga estabilidad global.</p>'
+    by_id("analysis-deformed-plan").innerHTML = placeholder
+    by_id("analysis-deformed-plan-caption").textContent = ""
+    by_id("analysis-axonometric").innerHTML = placeholder
+    by_id("analysis-axonometric-caption").textContent = ""
+    by_id("analysis-frame-elevation").innerHTML = placeholder
+    by_id("analysis-floor-forces-chart").innerHTML = placeholder
+    by_id("analysis-story-shear-chart").innerHTML = placeholder
+    by_id("analysis-column-moment-chart").innerHTML = placeholder
 
 
 def render_analysis_results() -> None:
@@ -1089,11 +1427,14 @@ def render_analysis_results() -> None:
         f"{label}={_compact_number(value)}"
         for label, value in zip(dof_labels, result["force_vector"])
     )
-    by_id("analysis-matrix").innerHTML = (
+    _update_matrix_panel(
         '<p class="matrix-caption">K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G. Orden de grados de libertad: {u<sub>x</sub>, u<sub>y</sub>, θ} por nivel.</p>'
         + _matrix_table(result["global_matrix"], dof_labels)
         + f'<p class="matrix-caption"><strong>Vector F:</strong> {force_items}</p>'
     )
+
+    render_deformation_views(result)
+    render_action_charts(result)
 
 
 def set_stage(stage: str) -> None:
@@ -1375,6 +1716,16 @@ def handle_change(event):
     field = str(field)
     if field == "analysis-levels":
         resize_analysis_levels(int(parse_number(target.value, 2.0)))
+        return
+    if field == "analysis-deform-level":
+        global analysis_view_level
+        analysis_view_level = int(parse_number(target.value, 1.0))
+        render_analysis_results()
+        return
+    if field == "analysis-elevation-axis":
+        global analysis_selected_axis_id
+        analysis_selected_axis_id = str(target.value)
+        render_analysis_results()
         return
     if field not in ("base", "top"):
         return

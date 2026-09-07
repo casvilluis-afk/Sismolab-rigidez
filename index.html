@@ -241,6 +241,44 @@
               <div id="analysis-plan" class="analysis-plan"></div>
             </div>
 
+            <div class="analysis-plan-card">
+              <div class="subheading subheading--with-control">
+                <div><h3>Planta deformada</h3><span>Diafragma original vs. desplazado y rotado</span></div>
+                <div class="viz-control"><label for="analysis-deform-level">Nivel</label><select id="analysis-deform-level" data-field="analysis-deform-level"></select></div>
+              </div>
+              <div id="analysis-deformed-plan" class="analysis-plan"></div>
+              <p id="analysis-deformed-plan-caption" class="viz-caption"></p>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Vista axonométrica deformada</h3><span>Inclinación acumulada por nivel</span></div>
+              <div id="analysis-axonometric" class="analysis-plan"></div>
+              <p id="analysis-axonometric-caption" class="viz-caption"></p>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading subheading--with-control">
+                <div><h3>Elevación de pórtico</h3><span>Deformada del modelo de corte</span></div>
+                <div class="viz-control"><label for="analysis-elevation-axis">Eje</label><select id="analysis-elevation-axis" data-field="analysis-elevation-axis"></select></div>
+              </div>
+              <div id="analysis-frame-elevation" class="analysis-elevation"></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Fuerza sísmica por piso</h3><span>Entrada F por nivel</span></div>
+              <div id="analysis-floor-forces-chart" class="analysis-chart"></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Cortante de piso</h3><span>Σ F desde el techo hasta el nivel</span></div>
+              <div id="analysis-story-shear-chart" class="analysis-chart"></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Momento en columna</h3><span>Extremo Vh/2 del eje seleccionado arriba</span></div>
+              <div id="analysis-column-moment-chart" class="analysis-chart"></div>
+            </div>
+
             <div id="analysis-displacements" class="analysis-table-card"></div>
             <div id="analysis-frames" class="analysis-table-card"></div>
             <details class="matrix-card">
