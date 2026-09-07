@@ -987,13 +987,17 @@ def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
         parts.append(
             f'<text class="analysis-axis-label" x="{label_x:.1f}" y="{label_y:.1f}">{escape(str(group.axis))} · β={format_number(group.beta, 0)}°</text>'
         )
+    if center_rigidity is not None:
+        # El CR se dibuja ANTES que el CM y como rombo hueco: si ambos
+        # coinciden (edificio simétrico, caso normal en el ejemplo estable)
+        # el círculo relleno del CM queda visible por encima y el rombo del
+        # CR se ve alrededor, en vez de que uno tape completamente al otro.
+        cr_x, cr_y = map_point(center_rigidity["x"], center_rigidity["y"])
+        parts.append(f'<rect class="analysis-cr" x="{cr_x - 9:.1f}" y="{cr_y - 9:.1f}" width="18" height="18" transform="rotate(45 {cr_x:.1f} {cr_y:.1f})"/>')
+        parts.append(f'<text class="analysis-cr-label" x="{cr_x + 14:.1f}" y="{cr_y + 21:.1f}">CR</text>')
     cm_x, cm_y = map_point(analysis_cm_x, analysis_cm_y)
     parts.append(f'<circle class="analysis-cm" cx="{cm_x:.1f}" cy="{cm_y:.1f}" r="8"/>')
     parts.append(f'<text class="analysis-cm-label" x="{cm_x + 12:.1f}" y="{cm_y - 10:.1f}">CM</text>')
-    if center_rigidity is not None:
-        cr_x, cr_y = map_point(center_rigidity["x"], center_rigidity["y"])
-        parts.append(f'<rect class="analysis-cr" x="{cr_x - 6:.1f}" y="{cr_y - 6:.1f}" width="12" height="12" transform="rotate(45 {cr_x:.1f} {cr_y:.1f})"/>')
-        parts.append(f'<text class="analysis-cr-label" x="{cr_x + 12:.1f}" y="{cr_y + 19:.1f}">CR</text>')
     parts.append('<text class="analysis-axis-label" x="477" y="278">X</text>')
     parts.append('<text class="analysis-axis-label" x="32" y="34">Y</text></svg>')
     return "".join(parts)
@@ -1014,6 +1018,21 @@ def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
         cells = "".join(f"<td>{_compact_number(value)}</td>" for value in row)
         rows.append(f"<tr><th>{escape(labels[index])}</th>{cells}</tr>")
     return f'<table class="matrix-table"><thead><tr><th>GDL</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+
+
+def toggle_matrix_panel() -> None:
+    """Abre/cierra el detalle de la matriz con un único clic.
+
+    Se llama con event.preventDefault() ya aplicado en el clic de la
+    <summary>, así el toggle nativo del navegador nunca compite con este
+    cambio explícito del atributo 'open'. Antes dependíamos del toggle
+    nativo más un parche que restauraba el estado tras cada re-render;
+    si un re-render caía justo entre el clic y el toggle nativo, hacía
+    falta un segundo clic para que el panel realmente abriera.
+    """
+    details = document.querySelector(".matrix-card")
+    if hasattr(details, "open"):
+        details.open = not bool(details.open)
 
 
 def _update_matrix_panel(html: str) -> None:
@@ -1601,6 +1620,9 @@ def handle_click(event):
     action = str(action_element.getAttribute("data-action"))
     if action == "units":
         change_units(str(action_element.getAttribute("data-value")))
+    elif action == "toggle-matrix":
+        event.preventDefault()
+        toggle_matrix_panel()
     elif action == "stage":
         set_stage(str(action_element.getAttribute("data-value")))
     elif action == "load-analysis-example":
