@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from html import escape
-from math import isfinite
+from math import cos, isfinite, radians, sin
 
 from pyscript import document, when
 
@@ -13,6 +13,7 @@ from stiffness import (
     STEEL_MODULUS_SI,
     boundary_description,
     boundary_factor,
+    analyze_pseudotridimensional,
     calculate_story,
     convert_group_units,
     direction_label,
@@ -25,6 +26,15 @@ from stiffness import (
 units = "SI"
 story_height = 3.0
 next_group_number = 2
+current_stage = "rigidity"
+analysis_level_count = 2
+analysis_heights = [3.0, 3.0]
+analysis_forces = [100.0, 200.0]
+analysis_alpha = 0.0
+analysis_cm_x = 2.5
+analysis_cm_y = 2.0
+analysis_ecc_x = 0.0
+analysis_ecc_y = 0.0
 groups = [
     ColumnGroup(
         id="c1",
@@ -37,6 +47,9 @@ groups = [
         material="concrete",
         direction="X",
         axis="1",
+        x0=0.0,
+        y0=0.0,
+        beta=0.0,
     )
 ]
 
@@ -46,9 +59,12 @@ def by_id(element_id: str):
 
 
 def format_number(value: float, digits: int = 2) -> str:
-    if not isfinite(float(value)):
+    number = float(value)
+    if not isfinite(number):
         return "—"
-    rendered = f"{float(value):,.{digits}f}"
+    if abs(number) < 0.5 * 10 ** (-digits):
+        number = 0.0
+    rendered = f"{number:,.{digits}f}"
     if digits:
         rendered = rendered.rstrip("0").rstrip(".")
     return rendered.replace(",", "§").replace(".", ",").replace("§", ".")
@@ -866,6 +882,300 @@ def render_results() -> None:
     show_warning(None)
 
 
+def render_analysis_inputs() -> None:
+    """Sincroniza los controles de la etapa 2 con el estado de Python."""
+    by_id("analysis-levels").value = str(analysis_level_count)
+    by_id("analysis-alpha").value = input_number(analysis_alpha)
+    by_id("analysis-cm-x").value = input_number(analysis_cm_x)
+    by_id("analysis-cm-y").value = input_number(analysis_cm_y)
+    by_id("analysis-ecc-x").value = input_number(analysis_ecc_x)
+    by_id("analysis-ecc-y").value = input_number(analysis_ecc_y)
+
+    floor_rows = []
+    for index in range(analysis_level_count):
+        floor_rows.append(
+            f"""
+            <div class="analysis-floor-row">
+              <strong>Nivel {index + 1}</strong>
+              <div class="analysis-mini-field"><input type="number" min="1" max="12" step="0.05" value="{input_number(analysis_heights[index])}" data-field="analysis-height" data-level="{index}" aria-label="Altura del nivel {index + 1}" /><span>h m</span></div>
+              <div class="analysis-mini-field"><input type="number" step="1" value="{input_number(analysis_forces[index])}" data-field="analysis-force" data-level="{index}" aria-label="Fuerza sísmica del nivel {index + 1}" /><span>F kN</span></div>
+            </div>
+            """
+        )
+    by_id("analysis-floor-list").innerHTML = "".join(floor_rows)
+
+    frame_rows = []
+    for index, group in enumerate(groups):
+        frame_rows.append(
+            f"""
+            <article class="analysis-frame-row">
+              <div class="analysis-frame-row__head">
+                <div><span class="column-code">C{index + 1}</span><strong>Eje {escape(str(group.axis))}</strong></div>
+                <div><span class="direction-chip">Base {group.direction}</span><small>{group.quantity} columna(s) · {shape_name(group.shape)}</small></div>
+              </div>
+              <div class="analysis-frame-fields">
+                <label>x₀ (m)<input type="number" step="0.1" value="{input_number(group.x0)}" data-field="analysis-frame-x" data-group="{group.id}" /></label>
+                <label>y₀ (m)<input type="number" step="0.1" value="{input_number(group.y0)}" data-field="analysis-frame-y" data-group="{group.id}" /></label>
+                <label>β (°)<input type="number" step="1" value="{input_number(group.beta)}" data-field="analysis-frame-beta" data-group="{group.id}" /></label>
+              </div>
+            </article>
+            """
+        )
+    by_id("analysis-frame-list").innerHTML = "".join(frame_rows)
+
+
+def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
+    points = [(float(group.x0), float(group.y0)) for group in groups]
+    points.append((analysis_cm_x, analysis_cm_y))
+    if center_rigidity is not None:
+        points.append((center_rigidity["x"], center_rigidity["y"]))
+    x_values = [point[0] for point in points]
+    y_values = [point[1] for point in points]
+    min_x, max_x = min(x_values), max(x_values)
+    min_y, max_y = min(y_values), max(y_values)
+    if max_x - min_x < 1.0:
+        center = (max_x + min_x) / 2.0
+        min_x, max_x = center - 2.5, center + 2.5
+    else:
+        margin = (max_x - min_x) * 0.18
+        min_x, max_x = min_x - margin, max_x + margin
+    if max_y - min_y < 1.0:
+        center = (max_y + min_y) / 2.0
+        min_y, max_y = center - 2.0, center + 2.0
+    else:
+        margin = (max_y - min_y) * 0.18
+        min_y, max_y = min_y - margin, max_y + margin
+
+    def map_point(x_value: float, y_value: float) -> tuple[float, float]:
+        px = 48.0 + (x_value - min_x) / (max_x - min_x) * 424.0
+        py = 262.0 - (y_value - min_y) / (max_y - min_y) * 224.0
+        return px, py
+
+    parts = [
+        '<svg viewBox="0 0 520 300" role="img" aria-label="Ejes resistentes y centro de masa en planta">',
+        '<rect x="48" y="38" width="424" height="224" rx="6" fill="white" stroke="#cbd7d5"/>',
+    ]
+    for step in range(1, 5):
+        grid_x = 48 + 424 * step / 5
+        grid_y = 38 + 224 * step / 5
+        parts.append(f'<line class="analysis-grid-line" x1="{grid_x:.1f}" y1="38" x2="{grid_x:.1f}" y2="262"/>')
+        parts.append(f'<line class="analysis-grid-line" x1="48" y1="{grid_y:.1f}" x2="472" y2="{grid_y:.1f}"/>')
+    for index, group in enumerate(groups):
+        px, py = map_point(float(group.x0), float(group.y0))
+        beta = radians(float(group.beta))
+        dx = cos(beta) * 56.0
+        dy = -sin(beta) * 56.0
+        extra_class = " analysis-axis-line--y" if abs(sin(beta)) > abs(cos(beta)) else ""
+        label_x = min(482.0, max(38.0, px + dx + 7.0))
+        label_y = min(278.0, max(24.0, py + dy - 7.0))
+        parts.append(
+            f'<line class="analysis-axis-line{extra_class}" x1="{px - dx:.1f}" y1="{py - dy:.1f}" x2="{px + dx:.1f}" y2="{py + dy:.1f}"/>'
+        )
+        parts.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#122c33"/>')
+        parts.append(
+            f'<text class="analysis-axis-label" x="{label_x:.1f}" y="{label_y:.1f}">{escape(str(group.axis))} · β={format_number(group.beta, 0)}°</text>'
+        )
+    cm_x, cm_y = map_point(analysis_cm_x, analysis_cm_y)
+    parts.append(f'<circle class="analysis-cm" cx="{cm_x:.1f}" cy="{cm_y:.1f}" r="8"/>')
+    parts.append(f'<text class="analysis-cm-label" x="{cm_x + 12:.1f}" y="{cm_y - 10:.1f}">CM</text>')
+    if center_rigidity is not None:
+        cr_x, cr_y = map_point(center_rigidity["x"], center_rigidity["y"])
+        parts.append(f'<rect class="analysis-cr" x="{cr_x - 6:.1f}" y="{cr_y - 6:.1f}" width="12" height="12" transform="rotate(45 {cr_x:.1f} {cr_y:.1f})"/>')
+        parts.append(f'<text class="analysis-cr-label" x="{cr_x + 12:.1f}" y="{cr_y + 19:.1f}">CR</text>')
+    parts.append('<text class="analysis-axis-label" x="477" y="278">X</text>')
+    parts.append('<text class="analysis-axis-label" x="32" y="34">Y</text></svg>')
+    return "".join(parts)
+
+
+def _compact_number(value: float) -> str:
+    number = float(value)
+    absolute = abs(number)
+    if absolute >= 100_000 or (0 < absolute < 0.001):
+        return f"{number:.3e}".replace(".", ",")
+    return format_number(number, 3)
+
+
+def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
+    header = "".join(f"<th>{escape(label)}</th>" for label in labels)
+    rows = []
+    for index, row in enumerate(matrix):
+        cells = "".join(f"<td>{_compact_number(value)}</td>" for value in row)
+        rows.append(f"<tr><th>{escape(labels[index])}</th>{cells}</tr>")
+    return f'<table class="matrix-table"><thead><tr><th>GDL</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+
+
+def _clear_analysis_results(message: str) -> None:
+    warning = by_id("analysis-warning")
+    warning.hidden = False
+    warning.innerHTML = f"<strong>El modelo aún no puede resolverse.</strong>{escape(message)}"
+    by_id("analysis-summary").innerHTML = (
+        '<div class="analysis-placeholder">Completa una configuración estable: debe existir rigidez en X, en Y y frente al giro. Puedes usar el ejemplo de dos niveles para ver el flujo completo.</div>'
+    )
+    by_id("analysis-displacements").innerHTML = ""
+    by_id("analysis-frames").innerHTML = ""
+    by_id("analysis-matrix").innerHTML = '<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>'
+
+
+def render_analysis_results() -> None:
+    by_id("analysis-plan").innerHTML = _analysis_plan_svg()
+    try:
+        result = analyze_pseudotridimensional(
+            groups,
+            analysis_heights,
+            analysis_forces,
+            analysis_alpha,
+            analysis_cm_x,
+            analysis_cm_y,
+            analysis_ecc_x,
+            analysis_ecc_y,
+            units,
+        )
+    except ValueError as error:
+        _clear_analysis_results(str(error))
+        return
+
+    warning = by_id("analysis-warning")
+    warning.hidden = True
+    warning.textContent = ""
+    by_id("analysis-plan").innerHTML = _analysis_plan_svg(result["center_rigidity"])
+    displacements = result["displacements"]
+    roof = displacements[-1]
+    max_drift = max(
+        max(abs(item["drift_x"]), abs(item["drift_y"]))
+        for item in displacements
+    )
+    center_rigidity = result["center_rigidity"]
+    center_text = (
+        f"({format_number(center_rigidity['x'], 3)}; {format_number(center_rigidity['y'], 3)})"
+        if center_rigidity is not None
+        else "—"
+    )
+    by_id("analysis-summary").innerHTML = f"""
+      <div class="analysis-metric"><span>Techo en X</span><strong>{format_number(roof['ux'] * 1000.0, 3)}</strong><small>mm</small></div>
+      <div class="analysis-metric"><span>Techo en Y</span><strong>{format_number(roof['uy'] * 1000.0, 3)}</strong><small>mm</small></div>
+      <div class="analysis-metric"><span>Deriva elástica máxima</span><strong>{format_number(max_drift * 1000.0, 4)}</strong><small>‰ · antes de factores normativos</small></div>
+      <div class="analysis-metric"><span>Centro de rigidez (x; y)</span><strong>{center_text}</strong><small>m · cuadrado CR en el plano</small></div>
+    """
+
+    displacement_rows = []
+    for item in reversed(displacements):
+        displacement_rows.append(
+            f"<tr><td>Nivel {item['level']}</td><td>{format_number(item['ux'] * 1000.0, 4)}</td><td>{format_number(item['uy'] * 1000.0, 4)}</td><td>{format_number(item['theta'] * 1000.0, 5)}</td><td>{format_number(item['drift_x'] * 1000.0, 5)}</td><td>{format_number(item['drift_y'] * 1000.0, 5)}</td></tr>"
+        )
+    by_id("analysis-displacements").innerHTML = f"""
+      <h3>Movimiento de los diafragmas</h3>
+      <p>La deriva es el desplazamiento relativo entre niveles dividido entre la altura del piso.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>u<sub>x</sub> (mm)</th><th>u<sub>y</sub> (mm)</th><th>θ (mrad)</th><th>Deriva X (‰)</th><th>Deriva Y (‰)</th></tr></thead><tbody>{''.join(displacement_rows)}</tbody></table></div>
+    """
+
+    frame_rows = []
+    for frame in result["frames"]:
+        for level in range(analysis_level_count - 1, -1, -1):
+            moment = frame["end_moments"][level]
+            moment_text = "—" if moment is None else format_number(moment, 3)
+            frame_rows.append(
+                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['lever_arm'], 3)}</td><td>{format_number(frame['story_shears'][level], 3)}</td><td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
+            )
+    by_id("analysis-frames").innerHTML = f"""
+      <h3>Distribución de acciones por eje</h3>
+      <p>El cortante de cada eje se reparte entre sus columnas iguales. El momento Vh/2 solo se muestra para uniones empotrada–rígida.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>r (m)</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{''.join(frame_rows)}</tbody></table></div>
+    """
+
+    dof_labels = []
+    for level in range(analysis_level_count):
+        dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
+    force_items = " · ".join(
+        f"{label}={_compact_number(value)}"
+        for label, value in zip(dof_labels, result["force_vector"])
+    )
+    by_id("analysis-matrix").innerHTML = (
+        '<p class="matrix-caption">K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G. Orden de grados de libertad: {u<sub>x</sub>, u<sub>y</sub>, θ} por nivel.</p>'
+        + _matrix_table(result["global_matrix"], dof_labels)
+        + f'<p class="matrix-caption"><strong>Vector F:</strong> {force_items}</p>'
+    )
+
+
+def set_stage(stage: str) -> None:
+    global current_stage
+    if stage not in ("rigidity", "analysis"):
+        return
+    current_stage = stage
+    is_analysis = stage == "analysis"
+    by_id("rigidity-stage").hidden = is_analysis
+    by_id("analysis-stage").hidden = not is_analysis
+    rigidity_button = by_id("stage-rigidity-button")
+    analysis_button = by_id("stage-analysis-button")
+    rigidity_button.classList.toggle("is-active", not is_analysis)
+    analysis_button.classList.toggle("is-active", is_analysis)
+    if is_analysis:
+        document.title = "SismoLab · Análisis estructural"
+        by_id("intro-eyebrow").textContent = "ANÁLISIS ESTRUCTURAL · DIAFRAGMA RÍGIDO"
+        by_id("intro-title").textContent = "Análisis pseudotridimensional del edificio"
+        by_id("intro-copy").textContent = "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros y cortantes."
+        by_id("model-note-title").textContent = "Modelo actual"
+        by_id("model-note-copy").textContent = "Tres grados de libertad por nivel y comportamiento elástico lineal."
+        rigidity_button.removeAttribute("aria-current")
+        analysis_button.setAttribute("aria-current", "step")
+        render_analysis_inputs()
+        render_analysis_results()
+    else:
+        document.title = "SismoLab · Rigidez lateral"
+        by_id("intro-eyebrow").textContent = "RIGIDEZ LATERAL · MODELO DE CORTE"
+        by_id("intro-title").textContent = "Rigidez lateral del entrepiso"
+        by_id("intro-copy").textContent = "Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano."
+        by_id("model-note-title").textContent = "Hipótesis principal"
+        by_id("model-note-copy").textContent = "Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas."
+        analysis_button.removeAttribute("aria-current")
+        rigidity_button.setAttribute("aria-current", "step")
+
+
+def resize_analysis_levels(levels: int) -> None:
+    global analysis_level_count, analysis_heights, analysis_forces
+    analysis_level_count = max(1, min(8, int(levels)))
+    while len(analysis_heights) < analysis_level_count:
+        analysis_heights.append(story_height)
+        analysis_forces.append(100.0 * (len(analysis_forces) + 1))
+    analysis_heights = analysis_heights[:analysis_level_count]
+    analysis_forces = analysis_forces[:analysis_level_count]
+    render_analysis_inputs()
+    render_analysis_results()
+
+
+def load_analysis_example() -> None:
+    global units, groups, next_group_number, analysis_level_count
+    global analysis_heights, analysis_forces, analysis_alpha
+    global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
+    units = "SI"
+    analysis_level_count = 2
+    analysis_heights = [3.0, 3.0]
+    analysis_forces = [100.0, 200.0]
+    analysis_alpha = 0.0
+    analysis_cm_x, analysis_cm_y = 2.5, 2.0
+    analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
+    common = {
+        "quantity": 2,
+        "shape": "square",
+        "dimension": 300.0,
+        "fc": 21.0,
+        "base": "fixed",
+        "top": "fixed",
+        "material": "concrete",
+    }
+    groups = [
+        ColumnGroup(id="c1", direction="X", axis="A", x0=2.5, y0=0.0, beta=0.0, **common),
+        ColumnGroup(id="c2", direction="X", axis="B", x0=2.5, y0=4.0, beta=0.0, **common),
+        ColumnGroup(id="c3", direction="Y", axis="C", x0=0.0, y0=2.0, beta=90.0, **common),
+        ColumnGroup(id="c4", direction="Y", axis="D", x0=5.0, y0=2.0, beta=90.0, **common),
+    ]
+    next_group_number = 5
+    render_unit_toggle()
+    render_groups()
+    render_results()
+    render_analysis_inputs()
+    render_analysis_results()
+
+
 def render_unit_toggle() -> None:
     for system in ("SI", "MKS"):
         button = by_id(f"units-{system.lower()}")
@@ -887,6 +1197,7 @@ def change_units(target: str) -> None:
     render_unit_toggle()
     render_groups()
     render_results()
+    render_analysis_results()
 
 
 def add_group() -> None:
@@ -906,23 +1217,39 @@ def add_group() -> None:
             material="concrete",
             direction="X",
             axis=str(next_group_number),
+            x0=0.0,
+            y0=float(next_group_number - 1) * 4.0,
+            beta=0.0,
         )
     )
     next_group_number += 1
     render_groups()
     render_results()
+    render_analysis_inputs()
+    render_analysis_results()
 
 
 def reset() -> None:
-    global units, story_height, groups, next_group_number
+    global units, story_height, groups, next_group_number, analysis_level_count
+    global analysis_heights, analysis_forces, analysis_alpha
+    global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     units = "SI"
     story_height = 3.0
     next_group_number = 2
-    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1")]
+    analysis_level_count = 2
+    analysis_heights = [3.0, 3.0]
+    analysis_forces = [100.0, 200.0]
+    analysis_alpha = 0.0
+    analysis_cm_x, analysis_cm_y = 2.5, 2.0
+    analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
+    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     by_id("story-height").value = "3"
     render_unit_toggle()
     render_groups()
     render_results()
+    render_analysis_inputs()
+    render_analysis_results()
+    set_stage("rigidity")
 
 
 @when("click", "#calculator")
@@ -933,6 +1260,10 @@ def handle_click(event):
     action = str(action_element.getAttribute("data-action"))
     if action == "units":
         change_units(str(action_element.getAttribute("data-value")))
+    elif action == "stage":
+        set_stage(str(action_element.getAttribute("data-value")))
+    elif action == "load-analysis-example":
+        load_analysis_example()
     elif action == "add":
         add_group()
     elif action == "reset":
@@ -943,6 +1274,8 @@ def handle_click(event):
             groups[:] = [group for group in groups if group.id != group_id]
             render_groups()
             render_results()
+            render_analysis_inputs()
+            render_analysis_results()
     elif action == "shape":
         group_id = str(action_element.getAttribute("data-id"))
         group = get_group(group_id)
@@ -950,6 +1283,7 @@ def handle_click(event):
             group.shape = str(action_element.getAttribute("data-value"))
             render_groups()
             render_results()
+            render_analysis_results()
     elif action == "material":
         group_id = str(action_element.getAttribute("data-id"))
         group = get_group(group_id)
@@ -957,18 +1291,22 @@ def handle_click(event):
             group.material = str(action_element.getAttribute("data-value"))
             render_groups()
             render_results()
+            render_analysis_results()
     elif action == "direction":
         group_id = str(action_element.getAttribute("data-id"))
         group = get_group(group_id)
         if group is not None:
             group.direction = str(action_element.getAttribute("data-value"))
+            group.beta = 0.0 if group.direction == "X" else 90.0
             render_groups()
             render_results()
+            render_analysis_results()
 
 
 @when("input", "#calculator")
 def handle_input(event):
-    global story_height
+    global story_height, analysis_alpha, analysis_cm_x, analysis_cm_y
+    global analysis_ecc_x, analysis_ecc_y
     target = event.target
     field = target.getAttribute("data-field")
     if field is None:
@@ -977,6 +1315,36 @@ def handle_input(event):
     if field == "story-height":
         story_height = parse_number(target.value)
         render_results()
+        return
+    if field == "analysis-height":
+        level = int(str(target.getAttribute("data-level")))
+        analysis_heights[level] = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-force":
+        level = int(str(target.getAttribute("data-level")))
+        analysis_forces[level] = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-alpha":
+        analysis_alpha = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-cm-x":
+        analysis_cm_x = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-cm-y":
+        analysis_cm_y = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-ecc-x":
+        analysis_ecc_x = parse_number(target.value)
+        render_analysis_results()
+        return
+    if field == "analysis-ecc-y":
+        analysis_ecc_y = parse_number(target.value)
+        render_analysis_results()
         return
     group_id = str(target.getAttribute("data-group"))
     group = get_group(group_id)
@@ -988,27 +1356,43 @@ def handle_input(event):
         setattr(group, field, parse_number(target.value))
     elif field == "axis":
         group.axis = str(target.value)[:12]
+    elif field == "analysis-frame-x":
+        group.x0 = parse_number(target.value)
+    elif field == "analysis-frame-y":
+        group.y0 = parse_number(target.value)
+    elif field == "analysis-frame-beta":
+        group.beta = parse_number(target.value)
     render_results()
+    render_analysis_results()
 
 
 @when("change", "#calculator")
 def handle_change(event):
     target = event.target
     field = target.getAttribute("data-field")
-    if field is None or str(field) not in ("base", "top"):
+    if field is None:
+        return
+    field = str(field)
+    if field == "analysis-levels":
+        resize_analysis_levels(int(parse_number(target.value, 2.0)))
+        return
+    if field not in ("base", "top"):
         return
     group = get_group(str(target.getAttribute("data-group")))
     if group is None:
         return
-    setattr(group, str(field), str(target.value))
+    setattr(group, field, str(target.value))
     render_groups()
     render_results()
+    render_analysis_results()
 
 
 def initialize() -> None:
     render_unit_toggle()
     render_groups()
     render_results()
+    render_analysis_inputs()
+    render_analysis_results()
     status = by_id("python-status")
     status.classList.add("is-ready")
     status.innerHTML = "<i></i> Motor Python activo"

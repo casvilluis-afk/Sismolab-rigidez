@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Calculadora en Python de rigidez lateral para columnas cuadradas y circulares de concreto armado." />
-    <title>SismoLab · Rigidez lateral</title>
+    <meta name="description" content="Herramienta educativa en Python para rigidez lateral y análisis pseudotridimensional de edificios." />
+    <title>SismoLab · Rigidez y análisis estructural</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
     <link rel="stylesheet" href="./styles.css" />
@@ -28,16 +28,28 @@
       <section id="inicio" class="intro">
         <div class="page-shell intro-grid">
           <div>
-            <p class="eyebrow">RIGIDEZ LATERAL · MODELO DE CORTE</p>
-            <h1>Rigidez lateral del entrepiso</h1>
-            <p class="intro-copy">Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
+            <p id="intro-eyebrow" class="eyebrow">RIGIDEZ LATERAL · MODELO DE CORTE</p>
+            <h1 id="intro-title">Rigidez lateral del entrepiso</h1>
+            <p id="intro-copy" class="intro-copy">Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
           </div>
           <div class="model-note">
             <span aria-hidden="true">i</span>
-            <p><strong>Hipótesis principal</strong>Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.</p>
+            <p><strong id="model-note-title">Hipótesis principal</strong><span id="model-note-copy">Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.</span></p>
           </div>
         </div>
       </section>
+
+      <nav class="page-shell stage-switcher" aria-label="Etapas de trabajo">
+        <button id="stage-rigidity-button" class="stage-tab is-active" type="button" data-action="stage" data-value="rigidity" aria-current="step">
+          <span>1</span><div><strong>Rigidez</strong><small>Propiedades de los ejes</small></div>
+        </button>
+        <span class="stage-connector" aria-hidden="true">→</span>
+        <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
+          <span>2</span><div><strong>Análisis</strong><small>Respuesta del edificio</small></div>
+        </button>
+      </nav>
+
+      <div id="rigidity-stage">
 
       <section class="page-shell unit-strip" aria-label="Sistema de unidades">
         <div>
@@ -133,8 +145,123 @@
           <article><span>03</span><h3>Alcance actual</h3><p>Es una idealización elástica inicial. El modelo global deberá incorporar vigas reales, torsión, segundo orden y las exigencias de la E.030.</p></article>
         </div>
         <div class="reference-row">
-          <p>Basado en <a href="https://sites.google.com/view/rigidez-lateral/in%C3%ADcio" target="_blank" rel="noreferrer">Rigidez Lateral ↗</a>. Concreto armado: E<sub>c</sub> = 4 700√f′c (SI) / 15 000√f′c (MKS). Acero: E constante ≈ 200 000 MPa.</p>
+          <p>Concreto armado: E<sub>c</sub> = 4 700√f′c (SI) / 15 000√f′c (MKS). Acero: E constante ≈ 200 000 MPa.</p>
           <span>Uso educativo · Requiere revisión de un ingeniero estructural</span>
+        </div>
+      </section>
+
+      <section class="page-shell analysis-transition" aria-labelledby="transition-heading">
+        <div class="transition-status"><span>✓</span> ETAPA 1 · RIGIDEZ</div>
+        <div class="transition-copy">
+          <p class="eyebrow">SIGUIENTE PASO</p>
+          <h2 id="transition-heading">De cada columna a la respuesta completa del edificio</h2>
+          <p>La rigidez que acabas de calcular se convierte ahora en la matriz de cada eje resistente. El análisis combina esas matrices con la posición en planta y las fuerzas de cada nivel.</p>
+        </div>
+        <ol class="transition-flow" aria-label="Transición entre rigidez y análisis">
+          <li><span>1</span><div><strong>Rigidez conocida</strong><small>k = cEI/h³ por grupo</small></div></li>
+          <li><span>2</span><div><strong>Ubicación del eje</strong><small>x, y y orientación β</small></div></li>
+          <li><span>3</span><div><strong>Respuesta global</strong><small>desplazamiento, giro y cortante</small></div></li>
+        </ol>
+        <button class="button transition-button" type="button" data-action="stage" data-value="analysis">Continuar al análisis <span aria-hidden="true">→</span></button>
+      </section>
+      </div>
+
+      <section id="analysis-stage" class="page-shell analysis-stage" hidden aria-labelledby="analysis-heading">
+        <div class="analysis-stage__head">
+          <button class="button button-ghost" type="button" data-action="stage" data-value="rigidity">← Volver a Rigidez</button>
+          <div>
+            <p class="eyebrow">ETAPA 2 · ANÁLISIS PSEUDOTRIDIMENSIONAL</p>
+            <h2 id="analysis-heading">Respuesta del edificio con diafragmas rígidos</h2>
+            <p>Cada nivel tiene tres movimientos: desplazamiento en X, desplazamiento en Y y giro alrededor del eje vertical.</p>
+          </div>
+        </div>
+
+        <div class="analysis-bridge" role="note">
+          <span aria-hidden="true">1 → 2</span>
+          <div><strong>¿Qué cambió?</strong><p>En Rigidez estudiaste cuánto se opone cada eje al movimiento. Aquí ubicas esos ejes en el plano y Python calcula cómo se mueve el edificio completo bajo las fuerzas sísmicas.</p></div>
+        </div>
+
+        <div class="analysis-workspace">
+          <section class="analysis-input-panel" aria-labelledby="analysis-data-heading">
+            <div class="section-heading">
+              <span class="step-number">03</span>
+              <div><h2 id="analysis-data-heading">Modelo global</h2><p>Define niveles, fuerzas y geometría de los ejes.</p></div>
+            </div>
+
+            <button class="button example-button" type="button" data-action="load-analysis-example">▦ Cargar ejemplo estable de 2 niveles</button>
+
+            <div class="analysis-form-grid">
+              <div class="field-block">
+                <label for="analysis-levels">Número de niveles</label>
+                <select id="analysis-levels" data-field="analysis-levels">
+                  <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label for="analysis-alpha">Dirección sísmica α</label>
+                <div class="input-with-unit"><input id="analysis-alpha" type="number" step="1" value="0" data-field="analysis-alpha" /><span>°</span></div>
+              </div>
+            </div>
+
+            <div class="analysis-subsection">
+              <div class="subheading"><h3>Fuerza y altura por nivel</h3><span>F en kN · h en m</span></div>
+              <div id="analysis-floor-list" class="analysis-floor-list"></div>
+            </div>
+
+            <div class="analysis-subsection">
+              <div class="subheading"><h3>Centro de masa</h3><span>coordenadas del diafragma</span></div>
+              <div class="analysis-form-grid analysis-form-grid--four">
+                <div class="field-block"><label for="analysis-cm-x">x<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-x" type="number" step="0.1" value="2.5" data-field="analysis-cm-x" /><span>m</span></div></div>
+                <div class="field-block"><label for="analysis-cm-y">y<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-y" type="number" step="0.1" value="2" data-field="analysis-cm-y" /><span>m</span></div></div>
+                <div class="field-block"><label for="analysis-ecc-x">e<sub>acc,x</sub></label><div class="input-with-unit"><input id="analysis-ecc-x" type="number" step="0.01" value="0" data-field="analysis-ecc-x" /><span>m</span></div></div>
+                <div class="field-block"><label for="analysis-ecc-y">e<sub>acc,y</sub></label><div class="input-with-unit"><input id="analysis-ecc-y" type="number" step="0.01" value="0" data-field="analysis-ecc-y" /><span>m</span></div></div>
+              </div>
+              <p class="field-help">Para una fuerza en X, e<sub>acc,y</sub> genera el momento torsor. El signo indica el lado del centro de masa.</p>
+            </div>
+
+            <div class="analysis-subsection">
+              <div class="subheading"><h3>Ejes resistentes</h3><span>se reutilizan tus grupos</span></div>
+              <p class="field-help">x₀, y₀ ubican un punto del eje; β mide su orientación antihoraria desde X.</p>
+              <div id="analysis-frame-list" class="analysis-frame-list"></div>
+            </div>
+          </section>
+
+          <section class="analysis-result-panel" aria-labelledby="analysis-result-heading">
+            <div class="analysis-result-card">
+              <div class="result-card__top">
+                <div><span class="result-kicker">RESPUESTA ELÁSTICA</span><h2 id="analysis-result-heading">Resultados del edificio</h2></div>
+                <span class="live-pill">Cálculo en vivo</span>
+              </div>
+              <div id="analysis-warning" class="analysis-warning" hidden></div>
+              <div id="analysis-summary" class="analysis-summary"></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Modelo en planta</h3><span>CM y ejes resistentes</span></div>
+              <div id="analysis-plan" class="analysis-plan"></div>
+            </div>
+
+            <div id="analysis-displacements" class="analysis-table-card"></div>
+            <div id="analysis-frames" class="analysis-table-card"></div>
+            <details class="matrix-card">
+              <summary>Matriz global K<sub>P3D</sub> y vector de fuerzas <span>ver detalle</span></summary>
+              <div id="analysis-matrix" class="matrix-scroll"></div>
+            </details>
+          </section>
+        </div>
+
+        <section class="analysis-method" aria-labelledby="analysis-method-heading">
+          <div class="theory-title"><span aria-hidden="true">∑</span><div><p class="eyebrow">CÓMO SE CONECTAN LAS DOS ETAPAS</p><h2 id="analysis-method-heading">Ruta matricial que ejecuta Python</h2></div></div>
+          <div class="analysis-method-grid">
+            <article><span>01</span><h3>Matriz de cada eje</h3><p>Las rigideces de los pisos forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></article>
+            <article><span>02</span><h3>Posición y orientación</h3><p>G relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo perpendicular r.</p></article>
+            <article><span>03</span><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G y el sistema K<sub>P3D</sub>U = F entrega desplazamientos y giros.</p></article>
+          </div>
+        </section>
+
+        <div class="analysis-scope">
+          <strong>Alcance de esta etapa</strong>
+          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. Usa la misma sección y el mismo grupo de columnas en todos los pisos; todavía no incluye vigas deformables, interacción suelo–estructura, segundo orden ni el procedimiento completo de diseño de la E.030.</p>
         </div>
       </section>
 
