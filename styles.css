@@ -132,6 +132,8 @@ select { padding: 8px 10px; }
 .iso-column-concrete { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; }
 .iso-column-steel { stroke: var(--amber); stroke-width: 7; stroke-linecap: round; }
 .iso-footing { fill: none; stroke: #20464e; stroke-width: 3; stroke-linecap: round; }
+.iso-marker-concrete { fill: white; stroke: var(--ink); stroke-width: 2; }
+.iso-marker-steel { fill: white; stroke: var(--amber); stroke-width: 2; }
 .iso-axis-x { fill: none; stroke: var(--teal); stroke-width: 3; }
 .iso-axis-y { fill: none; stroke: var(--violet); stroke-width: 3; }
 .iso-arrowhead-x { fill: var(--teal); }

@@ -291,19 +291,41 @@ def _material_class(material: str) -> str:
     return "iso-column-steel" if material == "steel" else "iso-column-concrete"
 
 
-def _expand_units(group_list: list[ColumnGroup], cap: int) -> list[str]:
-    units_list: list[str] = []
+def _expand_units(group_list: list[ColumnGroup], cap: int) -> list[tuple[str, str]]:
+    units_list: list[tuple[str, str]] = []
     for group in group_list:
         for _ in range(int(group.quantity)):
             if len(units_list) >= cap:
                 return units_list
-            units_list.append(group.material)
+            units_list.append((group.material, group.shape))
     return units_list
+
+
+def _iso_shape_marker(
+    top: tuple[float, float],
+    material: str,
+    shape: str,
+    ux: tuple[float, float],
+    uy: tuple[float, float],
+) -> str:
+    """Símbolo pequeño sobre la columna que indica si es cuadrada o circular."""
+    marker_class = f"iso-marker-{_material_class(material).removeprefix('iso-column-')}"
+    half = 0.16
+    if shape == "circle":
+        rx = ((ux[0] - uy[0]) ** 2 + (ux[1] - uy[1]) ** 2) ** 0.5 * half * 0.55
+        ry = rx * 0.55
+        return f'<ellipse class="{marker_class}" cx="{top[0]:.1f}" cy="{top[1]:.1f}" rx="{rx:.1f}" ry="{ry:.1f}"/>'
+    p1 = (top[0] - half * ux[0] - half * uy[0], top[1] - half * ux[1] - half * uy[1])
+    p2 = (top[0] + half * ux[0] - half * uy[0], top[1] + half * ux[1] - half * uy[1])
+    p3 = (top[0] + half * ux[0] + half * uy[0], top[1] + half * ux[1] + half * uy[1])
+    p4 = (top[0] - half * ux[0] + half * uy[0], top[1] - half * ux[1] + half * uy[1])
+    points = " ".join(f"{p[0]:.1f},{p[1]:.1f}" for p in (p1, p2, p3, p4))
+    return f'<polygon class="{marker_class}" points="{points}"/>'
 
 
 def render_frame_diagram() -> None:
     """Dibuja un corte isométrico del entrepiso que refleja los grupos actuales."""
-    corner = (250.0, 250.0)
+    corner = (0.0, 0.0)
     ux = (54.0, -31.0)
     uy = (-54.0, -31.0)
     height_px = max(70.0, min(170.0, 32.0 * max(story_height, 0.1)))
@@ -321,11 +343,16 @@ def render_frame_diagram() -> None:
     bays_y = max(1, len(y_units))
 
     parts: list[str] = []
+    bbox_points: list[tuple[float, float]] = []
+
+    def track(*points: tuple[float, float]) -> None:
+        bbox_points.extend(points)
 
     # Contorno del terreno (referencia, línea punteada)
     ground_x = _iso_point(bays_x, 0, 0, corner, ux, uy, uz)
     ground_y = _iso_point(0, bays_y, 0, corner, ux, uy, uz)
     ground_origin = _iso_point(0, 0, 0, corner, ux, uy, uz)
+    track(ground_x, ground_y, ground_origin)
     parts.append(
         f'<path class="iso-ground" d="M{ground_origin[0]:.1f} {ground_origin[1]:.1f} '
         f'L{ground_x[0]:.1f} {ground_x[1]:.1f} M{ground_origin[0]:.1f} {ground_origin[1]:.1f} '
@@ -337,40 +364,48 @@ def render_frame_diagram() -> None:
     topx = _iso_point(bays_x, 0, 1, corner, ux, uy, uz)
     topxy = _iso_point(bays_x, bays_y, 1, corner, ux, uy, uz)
     topy = _iso_point(0, bays_y, 1, corner, ux, uy, uz)
+    track(top0, topx, topxy, topy)
     slab_points = " ".join(f"{p[0]:.1f},{p[1]:.1f}" for p in (top0, topx, topxy, topy))
     parts.append(f'<polygon class="iso-slab" points="{slab_points}"/>')
 
     # Columna de esquina (comparte X e Y)
-    corner_material = x_units[0] if x_units else (y_units[0] if y_units else "concrete")
+    corner_material, corner_shape = x_units[0] if x_units else (y_units[0] if y_units else ("concrete", "square"))
     base_c = _iso_point(0, 0, 0, corner, ux, uy, uz)
     top_c = _iso_point(0, 0, 1, corner, ux, uy, uz)
+    track(base_c, top_c)
     parts.append(
         f'<line class="{_material_class(corner_material)}" x1="{base_c[0]:.1f}" y1="{base_c[1]:.1f}" '
         f'x2="{top_c[0]:.1f}" y2="{top_c[1]:.1f}"/>'
     )
     parts.append(_iso_footing(*base_c))
+    parts.append(_iso_shape_marker(top_c, corner_material, corner_shape, ux, uy))
 
-    for i, material in enumerate(x_units, start=1):
+    for i, (material, shape) in enumerate(x_units, start=1):
         base = _iso_point(i, 0, 0, corner, ux, uy, uz)
         top = _iso_point(i, 0, 1, corner, ux, uy, uz)
+        track(base, top)
         parts.append(
             f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
             f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
         )
         parts.append(_iso_footing(*base))
+        parts.append(_iso_shape_marker(top, material, shape, ux, uy))
 
-    for j, material in enumerate(y_units, start=1):
+    for j, (material, shape) in enumerate(y_units, start=1):
         base = _iso_point(0, j, 0, corner, ux, uy, uz)
         top = _iso_point(0, j, 1, corner, ux, uy, uz)
+        track(base, top)
         parts.append(
             f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
             f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
         )
         parts.append(_iso_footing(*base))
+        parts.append(_iso_shape_marker(top, material, shape, ux, uy))
 
     if nx_total > 0:
         arrow_base = _iso_point(bays_x, 0, 1, corner, ux, uy, uz)
         arrow_tip = _iso_point(bays_x + 0.65, 0, 1, corner, ux, uy, uz)
+        track(arrow_base, arrow_tip, (arrow_tip[0] + 60, arrow_tip[1]))
         parts.append(
             f'<path class="iso-axis-x" d="M{arrow_base[0]:.1f} {arrow_base[1]:.1f} '
             f'L{arrow_tip[0]:.1f} {arrow_tip[1]:.1f}" marker-end="url(#isoArrowX)"/>'
@@ -379,6 +414,7 @@ def render_frame_diagram() -> None:
     if ny_total > 0:
         arrow_base = _iso_point(0, bays_y, 1, corner, ux, uy, uz)
         arrow_tip = _iso_point(0, bays_y + 0.65, 1, corner, ux, uy, uz)
+        track(arrow_base, arrow_tip, (arrow_tip[0] - 60, arrow_tip[1]))
         parts.append(
             f'<path class="iso-axis-y" d="M{arrow_base[0]:.1f} {arrow_base[1]:.1f} '
             f'L{arrow_tip[0]:.1f} {arrow_tip[1]:.1f}" marker-end="url(#isoArrowY)"/>'
@@ -389,15 +425,18 @@ def render_frame_diagram() -> None:
 
     if nx_total > cap:
         label_pt = _iso_point(bays_x, 0, 1.18, corner, ux, uy, uz)
+        track(label_pt)
         parts.append(f'<text class="iso-overflow" x="{label_pt[0]:.1f}" y="{label_pt[1]:.1f}">+{nx_total - cap}</text>')
     if ny_total > cap:
         label_pt = _iso_point(0, bays_y, 1.18, corner, ux, uy, uz)
+        track(label_pt)
         parts.append(
             f'<text class="iso-overflow" x="{label_pt[0]:.1f}" y="{label_pt[1]:.1f}" text-anchor="end">+{ny_total - cap}</text>'
         )
 
     dim_base = _iso_point(-0.32, -0.08, 0, corner, ux, uy, uz)
     dim_top = _iso_point(-0.32, -0.08, 1, corner, ux, uy, uz)
+    track((dim_base[0] - 95, dim_base[1]), (dim_top[0] - 95, dim_top[1]))
     parts.append(
         f'<path class="iso-dim" d="M{dim_base[0]:.1f} {dim_base[1]:.1f} L{dim_top[0]:.1f} {dim_top[1]:.1f} '
         f'M{dim_base[0] - 5:.1f} {dim_base[1]:.1f} L{dim_base[0] + 5:.1f} {dim_base[1]:.1f} '
@@ -409,8 +448,17 @@ def render_frame_diagram() -> None:
         f'<text class="iso-dim-label" x="{dim_mid_x:.1f}" y="{dim_mid_y:.1f}">h = {format_number(story_height, 2)} m</text>'
     )
 
+    # Encuadre dinámico: la vista se ajusta según cuántas columnas hay,
+    # para que el dibujo siempre se vea centrado y a buena escala.
+    pad_x, pad_top, pad_bottom = 34.0, 34.0, 22.0
+    min_x = min(p[0] for p in bbox_points) - pad_x
+    max_x = max(p[0] for p in bbox_points) + pad_x
+    min_y = min(p[1] for p in bbox_points) - pad_top
+    max_y = max(p[1] for p in bbox_points) + pad_bottom
+    view_box = f"{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}"
+
     svg = (
-        '<svg viewBox="0 0 500 300" role="img" '
+        f'<svg viewBox="{view_box}" role="img" '
         'aria-label="Corte isométrico del entrepiso con columnas en X e Y">'
         "<defs>"
         '<marker id="isoArrowX" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
