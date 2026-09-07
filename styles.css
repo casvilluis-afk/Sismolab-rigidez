@@ -101,6 +101,13 @@ select { padding: 8px 10px; }
 .shape-option.is-selected { color: var(--teal-dark); background: var(--teal-pale); border-color: #7dc3c1; }
 .shape-symbol { width: 16px; height: 16px; display: inline-block; border: 2px solid currentColor; }
 .shape-symbol.circle { border-radius: 50%; }
+.axis-location-card { display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 12px; align-items: start; margin-top: 15px; padding: 14px; background: #f6faf9; border: 1px solid #cbdedb; border-radius: 9px; }
+.axis-location-icon { width: 40px; height: 40px; display: grid; place-items: center; color: white; background: var(--teal); border-radius: 8px; font-family: var(--mono); font-size: 21px; font-weight: 800; }
+.axis-input-row { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; overflow: hidden; background: white; border: 1px solid var(--border); border-radius: 8px; }
+.axis-input-row:focus-within { outline: 3px solid rgba(8,122,131,.2); outline-offset: 2px; }
+.axis-input-row > span { align-self: stretch; display: grid; place-items: center; padding: 0 11px; color: var(--teal-dark); background: var(--teal-pale); border-right: 1px solid #c4ddda; font-family: var(--mono); font-size: 11px; font-weight: 800; }
+.axis-input-row input { min-width: 0; height: 42px; padding: 8px 11px; color: var(--ink); background: white; border: 0; font-weight: 800; }
+.axis-input-row input:focus-visible { outline: none; }
 .total-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .case-note { display: flex; align-items: center; gap: 11px; margin-top: 15px; padding: 11px 12px; color: #345057; background: #f1f6f5; border-left: 3px solid var(--teal); border-radius: 6px; }
 .case-note > b { color: var(--teal); font-size: 19px; }
@@ -129,6 +136,9 @@ select { padding: 8px 10px; }
 .frame-diagram-3d svg { width: 100%; height: auto; display: block; }
 .iso-ground { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .iso-slab { fill: var(--teal-pale); fill-opacity: .92; stroke: var(--teal-dark); stroke-width: 2; stroke-linejoin: round; }
+.iso-grid-line { stroke: #79aaa8; stroke-width: 1; stroke-dasharray: 4 3; opacity: .85; }
+.iso-grid-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 10px; font-weight: 800; }
+.iso-station-label { fill: var(--violet); font-family: var(--mono); font-size: 10px; font-weight: 800; }
 .iso-column-concrete { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; }
 .iso-column-steel { stroke: var(--amber); stroke-width: 7; stroke-linecap: round; }
 .iso-footing { fill: none; stroke: #20464e; stroke-width: 3; stroke-linecap: round; }
@@ -154,6 +164,10 @@ select { padding: 8px 10px; }
 .iso-legend-shape { width: 12px; height: 12px; display: inline-block; border: 2px solid var(--muted); }
 .iso-legend-shape--circle { border-radius: 50%; }
 .plan-grid { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.plan-axis-line { stroke: #8bbab6; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.plan-station-line { stroke: #c4cbdf; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.plan-grid-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 11px; font-weight: 800; }
+.plan-station-label { fill: var(--violet); font-family: var(--mono); font-size: 11px; font-weight: 800; }
 .plan-axis-x { fill: none; stroke: var(--teal); stroke-width: 2.5; }
 .plan-axis-y { fill: none; stroke: var(--violet); stroke-width: 2.5; }
 .plan-axis-label-x { fill: var(--teal-dark); font-family: var(--mono); font-size: 13px; font-weight: 800; }

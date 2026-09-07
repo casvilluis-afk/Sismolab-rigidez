@@ -54,7 +54,7 @@
         <section class="input-panel" aria-labelledby="datos-heading">
           <div class="section-heading">
             <span class="step-number">01</span>
-            <div><h2 id="datos-heading">Datos del entrepiso</h2><p>Define la altura y cada grupo de columnas.</p></div>
+            <div><h2 id="datos-heading">Datos del entrepiso</h2><p>Define la altura, propiedades y eje estructural de cada grupo.</p></div>
           </div>
 
           <div class="story-card">
@@ -90,12 +90,12 @@
               </output>
             </div>
             <div id="calculation-warning" class="calculation-warning" hidden></div>
-            <div class="formula-bar"><b>Σ</b><span>k<sub>x</sub> ó k<sub>y</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³ (solo columnas asignadas a ese eje)</span></div>
+            <div class="formula-bar"><b>Σ</b><span>k<sub>x</sub> ó k<sub>y</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³ (solo columnas asignadas a esa dirección)</span></div>
           </div>
 
           <div class="frame-diagram">
             <div id="frame-diagram-3d" class="frame-diagram-3d"></div>
-            <p id="diagram-caption">Corte isométrico ilustrativo.</p>
+            <p id="diagram-caption">Retícula estructural en vista isométrica.</p>
             <div class="iso-legend">
               <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--concrete"></i>Concreto</span>
               <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--steel"></i>Acero</span>
@@ -103,7 +103,7 @@
             <div class="diagram-divider"></div>
             <h3 class="diagram-subheading">Vista en planta</h3>
             <div id="frame-diagram-plan" class="frame-diagram-3d frame-diagram-plan"></div>
-            <p id="plan-caption">Distribución en planta ilustrativa.</p>
+            <p id="plan-caption">Distribución real por ejes estructurales.</p>
             <div class="iso-legend">
               <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Cuadrada</span>
               <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--circle"></i>Circular</span>

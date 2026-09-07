@@ -36,6 +36,7 @@ groups = [
         top="fixed",
         material="concrete",
         direction="X",
+        axis="1",
     )
 ]
 
@@ -123,6 +124,7 @@ def group_card(group: ColumnGroup, index: int) -> str:
     steel_selected = " is-selected" if group.material == "steel" else ""
     dir_x_selected = " is-selected" if group.direction == "X" else ""
     dir_y_selected = " is-selected" if group.direction == "Y" else ""
+    axis_value = escape(str(group.axis), quote=True)
 
     material_options = f"""
       <fieldset class="field-block shape-field">
@@ -180,6 +182,17 @@ def group_card(group: ColumnGroup, index: int) -> str:
         </fieldset>
       </div>
       {material_options}
+      <div class="axis-location-card">
+        <div class="axis-location-icon" aria-hidden="true">⌗</div>
+        <div class="field-block">
+          <label for="axis-{group.id}">Eje estructural</label>
+          <div class="axis-input-row">
+            <span>EJE</span>
+            <input id="axis-{group.id}" type="text" maxlength="12" value="{axis_value}" placeholder="1, 2, A…" data-group="{group.id}" data-field="axis" />
+          </div>
+          <small>Las columnas del grupo se repartirán sobre esta línea en el plano.</small>
+        </div>
+      </div>
       <div class="form-grid">
         <div class="field-block">
           <label for="dimension-{group.id}">{dimension_label}</label>
@@ -221,7 +234,7 @@ def contribution_row(group: ColumnGroup, calculation: dict, index: int, directio
       <div class="contribution-row">
         <div class="contribution-symbol"><span class="shape-symbol{circle_class}"></span></div>
         <div class="contribution-main">
-          <div><strong>C{index + 1}</strong><span>{group.quantity} × {shape_name(group.shape)} · {material_label(group.material)}</span><em>{format_number(percent, 1)}%</em></div>
+          <div><strong>C{index + 1}</strong><span>Eje {escape(str(group.axis))} · {group.quantity} × {shape_name(group.shape)} · {material_label(group.material)}</span><em>{format_number(percent, 1)}%</em></div>
           <div class="progress-track"><span style="width:{min(100.0, percent):.2f}%"></span></div>
         </div>
         <b>{format_number(calculation['contribution'])}<small>{calculation['stiffness_unit']}</small></b>
@@ -249,7 +262,7 @@ def calculation_step(group: ColumnGroup, calculation: dict, index: int) -> str:
     open_attribute = " open" if index == 0 else ""
     return f"""
       <details class="step-detail"{open_attribute}>
-        <summary><span>C{index + 1}</span><div><strong>Sección {shape_name(group.shape)} × {group.quantity}</strong><small>{material_label(group.material)} · {direction_label(group.direction)} · {support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
+        <summary><span>C{index + 1}</span><div><strong>Eje {escape(str(group.axis))} · sección {shape_name(group.shape)} × {group.quantity}</strong><small>{material_label(group.material)} · {direction_label(group.direction)} · {support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
         <div class="step-content">
           {section_diagram(group.shape)}
           <ol>
@@ -323,7 +336,7 @@ def _iso_shape_marker(
     return f'<polygon class="{marker_class}" points="{points}"/>'
 
 
-def render_frame_diagram() -> None:
+def _legacy_render_frame_diagram() -> None:
     """Dibuja un corte isométrico del entrepiso que refleja los grupos actuales."""
     corner = (0.0, 0.0)
     ux = (54.0, -31.0)
@@ -482,7 +495,7 @@ def _plan_marker(cx: float, cy: float, material: str, shape: str) -> str:
     return f'<rect class="{marker_class}" x="{cx - 9:.1f}" y="{cy - 9:.1f}" width="18" height="18"/>'
 
 
-def render_plan_diagram() -> None:
+def _legacy_render_plan_diagram() -> None:
     """Dibuja una vista en planta (desde arriba) que distingue con claridad
     la forma real de cada columna: cuadrada (□) o circular (○)."""
     L = 48.0
@@ -577,6 +590,239 @@ def render_plan_diagram() -> None:
     )
 
 
+def _display_axis(axis: str) -> str:
+    """Presenta una etiqueta uniforme sin obligar al usuario a escribir 'Eje'."""
+    clean = str(axis).strip() or "?"
+    return clean if clean.lower().startswith("eje ") else f"Eje {clean}"
+
+
+def _grid_layout(cap_per_axis: int = 10) -> list[tuple[str, list[tuple[str, str, str]], int]]:
+    """Agrupa las columnas por eje y asigna estaciones A, B, C... sobre cada línea.
+
+    Cada unidad conserva material, sección y dirección sísmica. La cantidad total
+    se conserva aunque el dibujo limite los símbolos para seguir siendo legible.
+    """
+    order: list[str] = []
+    visible: dict[str, list[tuple[str, str, str]]] = {}
+    totals: dict[str, int] = {}
+    for group in groups:
+        axis = str(group.axis).strip() or "?"
+        if axis not in visible:
+            order.append(axis)
+            visible[axis] = []
+            totals[axis] = 0
+        quantity = max(0, int(group.quantity))
+        totals[axis] += quantity
+        remaining = max(0, cap_per_axis - len(visible[axis]))
+        visible[axis].extend(
+            (group.material, group.shape, group.direction)
+            for _ in range(min(quantity, remaining))
+        )
+    return [(axis, visible[axis], totals[axis]) for axis in order]
+
+
+def render_frame_diagram() -> None:
+    """Dibuja la misma retícula estructural de la planta en vista isométrica."""
+    layout = _grid_layout()
+    if not layout:
+        by_id("frame-diagram-3d").innerHTML = ""
+        by_id("diagram-caption").textContent = "Añade un grupo para generar la retícula."
+        return
+
+    axis_count = len(layout)
+    station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
+    corner = (0.0, 0.0)
+    ux = (64.0, -35.0)
+    uy = (-48.0, -28.0)
+    height_px = max(78.0, min(172.0, 34.0 * max(story_height, 0.1)))
+    uz = (0.0, -height_px)
+    min_grid_x, max_grid_x = -0.36, max(0, axis_count - 1) + 0.36
+    min_grid_y, max_grid_y = -0.36, max(0, station_count - 1) + 0.36
+    parts: list[str] = []
+    bbox: list[tuple[float, float]] = []
+
+    def point(gx: float, gy: float, top: float = 0.0) -> tuple[float, float]:
+        projected = _iso_point(gx, gy, top, corner, ux, uy, uz)
+        bbox.append(projected)
+        return projected
+
+    # Contorno de losa que rodea exactamente la retícula utilizada.
+    slab = [
+        point(min_grid_x, min_grid_y, 1),
+        point(max_grid_x, min_grid_y, 1),
+        point(max_grid_x, max_grid_y, 1),
+        point(min_grid_x, max_grid_y, 1),
+    ]
+    slab_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in slab)
+    parts.append(f'<polygon class="iso-slab" points="{slab_points}"/>')
+
+    # Líneas de la grilla sobre la losa.
+    for axis_index in range(axis_count):
+        start = point(axis_index, min_grid_y, 1)
+        end = point(axis_index, max_grid_y, 1)
+        parts.append(
+            f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
+            f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
+        )
+    for station_index in range(station_count):
+        start = point(min_grid_x, station_index, 1)
+        end = point(max_grid_x, station_index, 1)
+        parts.append(
+            f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
+            f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
+        )
+
+    total_columns = 0
+    for axis_index, (axis, axis_units, axis_total) in enumerate(layout):
+        total_columns += axis_total
+        label_point = point(axis_index, min_grid_y - 0.34, 1)
+        parts.append(
+            f'<text class="iso-grid-label" x="{label_point[0]:.1f}" y="{label_point[1] - 5:.1f}" '
+            f'text-anchor="middle">{escape(_display_axis(axis))}</text>'
+        )
+        for station_index, (material, shape, _direction) in enumerate(axis_units):
+            base = point(axis_index, station_index, 0)
+            top = point(axis_index, station_index, 1)
+            parts.append(
+                f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
+                f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
+            )
+            parts.append(_iso_footing(*base))
+            parts.append(_iso_shape_marker(top, material, shape, ux, uy))
+        hidden_count = axis_total - len(axis_units)
+        if hidden_count > 0:
+            overflow_point = point(axis_index, max(0, len(axis_units) - 1), 1.18)
+            parts.append(
+                f'<text class="iso-overflow" x="{overflow_point[0]:.1f}" y="{overflow_point[1]:.1f}" '
+                f'text-anchor="middle">+{hidden_count}</text>'
+            )
+
+    # Letras de las estaciones transversales.
+    for station_index in range(station_count):
+        station_point = point(min_grid_x - 0.28, station_index, 1)
+        station = chr(65 + station_index)
+        parts.append(
+            f'<text class="iso-station-label" x="{station_point[0]:.1f}" y="{station_point[1]:.1f}" '
+            f'text-anchor="end">{station}</text>'
+        )
+
+    # Flechas X/Y: indican la dirección de análisis, no la ubicación del eje.
+    x_start = point(max_grid_x, min_grid_y, 1)
+    x_end = point(max_grid_x + 0.7, min_grid_y, 1)
+    y_start = point(min_grid_x, max_grid_y, 1)
+    y_end = point(min_grid_x, max_grid_y + 0.7, 1)
+    parts.extend(
+        [
+            f'<path class="iso-axis-x" d="M{x_start[0]:.1f} {x_start[1]:.1f} L{x_end[0]:.1f} {x_end[1]:.1f}" marker-end="url(#isoArrowX)"/>',
+            f'<text class="iso-axis-x-label" x="{x_end[0] + 6:.1f}" y="{x_end[1]:.1f}">X</text>',
+            f'<path class="iso-axis-y" d="M{y_start[0]:.1f} {y_start[1]:.1f} L{y_end[0]:.1f} {y_end[1]:.1f}" marker-end="url(#isoArrowY)"/>',
+            f'<text class="iso-axis-y-label" x="{y_end[0] - 6:.1f}" y="{y_end[1]:.1f}" text-anchor="end">Y</text>',
+        ]
+    )
+
+    dim_base = point(min_grid_x - 0.7, min_grid_y, 0)
+    dim_top = point(min_grid_x - 0.7, min_grid_y, 1)
+    parts.append(
+        f'<path class="iso-dim" d="M{dim_base[0]:.1f} {dim_base[1]:.1f} L{dim_top[0]:.1f} {dim_top[1]:.1f}"/>'
+    )
+    parts.append(
+        f'<text class="iso-dim-label" x="{dim_top[0] - 7:.1f}" y="{(dim_base[1] + dim_top[1]) / 2:.1f}" '
+        f'text-anchor="end">h = {format_number(story_height, 2)} m</text>'
+    )
+
+    padding = 42.0
+    min_x = min(x for x, _ in bbox) - padding
+    max_x = max(x for x, _ in bbox) + padding
+    min_y = min(y for _, y in bbox) - padding
+    max_y = max(y for _, y in bbox) + padding
+    svg = (
+        f'<svg viewBox="{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}" '
+        'role="img" aria-label="Vista isométrica de la retícula estructural">'
+        '<defs><marker id="isoArrowX" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-x" d="M0,0 L8,4 L0,8 Z"/></marker>'
+        '<marker id="isoArrowY" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-y" d="M0,0 L8,4 L0,8 Z"/></marker></defs>'
+        + "".join(parts)
+        + "</svg>"
+    )
+    by_id("frame-diagram-3d").innerHTML = svg
+    by_id("diagram-caption").textContent = (
+        f"{total_columns} columna(s) distribuida(s) en {axis_count} eje(s) estructural(es)."
+    )
+
+
+def render_plan_diagram() -> None:
+    """Dibuja una planta de ejes: cada grupo aparece sobre la línea indicada."""
+    layout = _grid_layout()
+    if not layout:
+        by_id("frame-diagram-plan").innerHTML = ""
+        by_id("plan-caption").textContent = "Añade un grupo para generar la planta."
+        return
+
+    spacing_x, spacing_y = 72.0, 56.0
+    axis_count = len(layout)
+    station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
+    width = max(0, axis_count - 1) * spacing_x
+    height = max(0, station_count - 1) * spacing_y
+    parts: list[str] = []
+
+    # Retícula: ejes estructurales verticales y estaciones A, B, C horizontales.
+    for axis_index, (axis, _axis_units, _axis_total) in enumerate(layout):
+        x = axis_index * spacing_x
+        parts.append(f'<line class="plan-axis-line" x1="{x:.1f}" y1="-18" x2="{x:.1f}" y2="{height + 18:.1f}"/>')
+        parts.append(
+            f'<text class="plan-grid-label" x="{x:.1f}" y="{height + 39:.1f}" text-anchor="middle">'
+            f'{escape(_display_axis(axis))}</text>'
+        )
+    for station_index in range(station_count):
+        y = station_index * spacing_y
+        parts.append(f'<line class="plan-station-line" x1="-18" y1="{y:.1f}" x2="{width + 18:.1f}" y2="{y:.1f}"/>')
+        parts.append(
+            f'<text class="plan-station-label" x="-29" y="{y + 4:.1f}" text-anchor="middle">{chr(65 + station_index)}</text>'
+        )
+
+    for axis_index, (_axis, axis_units, axis_total) in enumerate(layout):
+        x = axis_index * spacing_x
+        for station_index, (material, shape, _direction) in enumerate(axis_units):
+            y = station_index * spacing_y
+            parts.append(_plan_marker(x, y, material, shape))
+        hidden_count = axis_total - len(axis_units)
+        if hidden_count > 0:
+            parts.append(
+                f'<text class="plan-overflow" x="{x:.1f}" y="{height + 57:.1f}" '
+                f'text-anchor="middle">+{hidden_count} columnas</text>'
+            )
+
+    # Indicadores globales de coordenadas.
+    arrow_y = height + 77.0
+    parts.append(
+        f'<path class="plan-axis-x" d="M0 {arrow_y:.1f} L{max(70.0, width + 42):.1f} {arrow_y:.1f}" marker-end="url(#planArrowX)"/>'
+    )
+    parts.append(f'<text class="plan-axis-label-x" x="{max(76.0, width + 49):.1f}" y="{arrow_y + 4:.1f}">X</text>')
+    parts.append(
+        f'<path class="plan-axis-y" d="M-51 {height:.1f} L-51 -36" marker-end="url(#planArrowY)"/>'
+    )
+    parts.append('<text class="plan-axis-label-y" x="-47" y="-43">Y</text>')
+
+    min_x, min_y = -72.0, -60.0
+    max_x, max_y = max(width + 92.0, 165.0), arrow_y + 28.0
+    svg = (
+        f'<svg viewBox="{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}" '
+        'role="img" aria-label="Vista en planta de columnas distribuidas por ejes estructurales">'
+        '<defs><marker id="planArrowX" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-x" d="M0,0 L8,4 L0,8 Z"/></marker>'
+        '<marker id="planArrowY" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-y" d="M0,0 L8,4 L0,8 Z"/></marker></defs>'
+        + "".join(parts)
+        + "</svg>"
+    )
+    by_id("frame-diagram-plan").innerHTML = svg
+    axis_names = ", ".join(_display_axis(axis) for axis, _, _ in layout)
+    by_id("plan-caption").textContent = (
+        f"Retícula activa: {axis_names}. Las columnas se reparten en estaciones A, B, C…"
+    )
+
+
 def show_warning(message: str | None) -> None:
     warning = by_id("calculation-warning")
     warning.hidden = not bool(message)
@@ -659,6 +905,7 @@ def add_group() -> None:
             top="fixed",
             material="concrete",
             direction="X",
+            axis=str(next_group_number),
         )
     )
     next_group_number += 1
@@ -671,7 +918,7 @@ def reset() -> None:
     units = "SI"
     story_height = 3.0
     next_group_number = 2
-    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X")]
+    groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1")]
     by_id("story-height").value = "3"
     render_unit_toggle()
     render_groups()
@@ -739,6 +986,8 @@ def handle_input(event):
         group.quantity = int(parse_number(target.value))
     elif field in ("dimension", "fc"):
         setattr(group, field, parse_number(target.value))
+    elif field == "axis":
+        group.axis = str(target.value)[:12]
     render_results()
 
 

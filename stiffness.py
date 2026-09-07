@@ -48,6 +48,7 @@ class ColumnGroup:
     top: JointType
     material: MaterialType = "concrete"
     direction: Direction = "X"
+    axis: str = "1"
 
 
 @dataclass(slots=True)
@@ -85,6 +86,11 @@ def validate_group(group: ColumnGroup) -> None:
         raise ValueError("El material debe ser concreto o acero.")
     if group.direction not in ("X", "Y"):
         raise ValueError("La dirección debe ser X o Y.")
+    axis = str(group.axis).strip()
+    if not axis:
+        raise ValueError("Cada grupo debe indicar un eje estructural.")
+    if len(axis) > 12:
+        raise ValueError("El nombre del eje no puede superar 12 caracteres.")
     _positive_number(group.dimension, "La dimensión")
     _positive_number(group.fc, "La resistencia")
 
