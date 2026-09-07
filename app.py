@@ -309,8 +309,8 @@ def _iso_shape_marker(
     uy: tuple[float, float],
 ) -> str:
     """Símbolo pequeño sobre la columna que indica si es cuadrada o circular."""
-    marker_class = f"iso-marker-{_material_class(material).removeprefix('iso-column-')}"
-    half = 0.16
+    marker_class = f"iso-marker-{material}"
+    half = 0.24
     if shape == "circle":
         rx = ((ux[0] - uy[0]) ** 2 + (ux[1] - uy[1]) ** 2) ** 0.5 * half * 0.55
         ry = rx * 0.55
@@ -475,6 +475,108 @@ def render_frame_diagram() -> None:
     )
 
 
+def _plan_marker(cx: float, cy: float, material: str, shape: str) -> str:
+    marker_class = f"plan-marker-{material}"
+    if shape == "circle":
+        return f'<circle class="{marker_class}" cx="{cx:.1f}" cy="{cy:.1f}" r="10"/>'
+    return f'<rect class="{marker_class}" x="{cx - 9:.1f}" y="{cy - 9:.1f}" width="18" height="18"/>'
+
+
+def render_plan_diagram() -> None:
+    """Dibuja una vista en planta (desde arriba) que distingue con claridad
+    la forma real de cada columna: cuadrada (□) o circular (○)."""
+    L = 48.0
+    cap = 6
+
+    x_groups = [group for group in groups if group.direction == "X"]
+    y_groups = [group for group in groups if group.direction == "Y"]
+    nx_total = sum(int(group.quantity) for group in x_groups)
+    ny_total = sum(int(group.quantity) for group in y_groups)
+
+    x_units = _expand_units(x_groups, cap)
+    y_units = _expand_units(y_groups, cap)
+    bays_x = max(1, len(x_units))
+    bays_y = max(1, len(y_units))
+
+    parts: list[str] = []
+    bbox_points: list[tuple[float, float]] = []
+
+    def track(*points: tuple[float, float]) -> None:
+        bbox_points.extend(points)
+
+    end_x = (bays_x * L, 0.0)
+    end_y = (0.0, -bays_y * L)
+    corner_pt = (0.0, 0.0)
+    far_pt = (bays_x * L, -bays_y * L)
+    track(corner_pt, end_x, end_y, far_pt)
+
+    # Contorno punteado del entrepiso
+    parts.append(
+        f'<path class="plan-grid" d="M{corner_pt[0]:.1f} {corner_pt[1]:.1f} L{end_x[0]:.1f} {end_x[1]:.1f} '
+        f'L{far_pt[0]:.1f} {far_pt[1]:.1f} L{end_y[0]:.1f} {end_y[1]:.1f} Z"/>'
+    )
+
+    # Ejes X (teal) e Y (violeta)
+    axis_x_end = (bays_x * L + 30, 0.0)
+    axis_y_end = (0.0, -(bays_y * L + 30))
+    track(axis_x_end, axis_y_end)
+    parts.append(
+        f'<path class="plan-axis-x" d="M0 0 L{axis_x_end[0]:.1f} {axis_x_end[1]:.1f}" marker-end="url(#planArrowX)"/>'
+    )
+    parts.append(f'<text class="plan-axis-label-x" x="{axis_x_end[0] + 6:.1f}" y="4">X</text>')
+    parts.append(
+        f'<path class="plan-axis-y" d="M0 0 L{axis_y_end[0]:.1f} {axis_y_end[1]:.1f}" marker-end="url(#planArrowY)"/>'
+    )
+    parts.append(f'<text class="plan-axis-label-y" x="6" y="{axis_y_end[1] - 8:.1f}">Y</text>')
+
+    # Columna de esquina
+    corner_material, corner_shape = x_units[0] if x_units else (y_units[0] if y_units else ("concrete", "square"))
+    parts.append(_plan_marker(0, 0, corner_material, corner_shape))
+    track((0, 0))
+
+    for i, (material, shape) in enumerate(x_units, start=1):
+        px, py = i * L, 0.0
+        track((px, py))
+        parts.append(_plan_marker(px, py, material, shape))
+
+    for j, (material, shape) in enumerate(y_units, start=1):
+        px, py = 0.0, -j * L
+        track((px, py))
+        parts.append(_plan_marker(px, py, material, shape))
+
+    if nx_total > cap:
+        pt = (bays_x * L, 20.0)
+        track(pt)
+        parts.append(f'<text class="plan-overflow" x="{pt[0]:.1f}" y="{pt[1]:.1f}" text-anchor="middle">+{nx_total - cap}</text>')
+    if ny_total > cap:
+        pt = (-24.0, -bays_y * L)
+        track(pt)
+        parts.append(f'<text class="plan-overflow" x="{pt[0]:.1f}" y="{pt[1]:.1f}" text-anchor="middle">+{ny_total - cap}</text>')
+
+    pad = 30.0
+    min_x = min(p[0] for p in bbox_points) - pad
+    max_x = max(p[0] for p in bbox_points) + pad
+    min_y = min(p[1] for p in bbox_points) - pad
+    max_y = max(p[1] for p in bbox_points) + pad
+    view_box = f"{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}"
+
+    svg = (
+        f'<svg viewBox="{view_box}" role="img" aria-label="Vista en planta de la distribución de columnas">'
+        "<defs>"
+        '<marker id="planArrowX" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-x" d="M0,0 L8,4 L0,8 Z"/></marker>'
+        '<marker id="planArrowY" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+        '<path class="iso-arrowhead-y" d="M0,0 L8,4 L0,8 Z"/></marker>'
+        "</defs>"
+        + "".join(parts)
+        + "</svg>"
+    )
+    by_id("frame-diagram-plan").innerHTML = svg
+    by_id("plan-caption").textContent = (
+        "Cada símbolo respeta la forma real de la columna: cuadrado = sección cuadrada, círculo = sección circular."
+    )
+
+
 def show_warning(message: str | None) -> None:
     warning = by_id("calculation-warning")
     warning.hidden = not bool(message)
@@ -490,6 +592,7 @@ def render_results() -> None:
         f"h = {format_number(story_height, 3)} m = <strong>{format_number(height_in_units, 2)} {labels['length']}</strong>"
     )
     render_frame_diagram()
+    render_plan_diagram()
     try:
         result = calculate_story(groups, story_height, units)
     except ValueError as error:

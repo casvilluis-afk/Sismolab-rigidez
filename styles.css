@@ -148,6 +148,19 @@ select { padding: 8px 10px; }
 .iso-legend-dot { width: 10px; height: 10px; display: inline-block; border-radius: 50%; }
 .iso-legend-dot--concrete { background: var(--ink); }
 .iso-legend-dot--steel { background: var(--amber); }
+.diagram-divider { height: 1px; margin: 18px 0 14px; background: var(--border); }
+.diagram-subheading { margin: 0 0 8px; color: var(--foreground); font-size: 13px; font-weight: 800; text-align: center; text-transform: uppercase; letter-spacing: .04em; }
+.frame-diagram-plan svg { max-height: 220px; }
+.iso-legend-shape { width: 12px; height: 12px; display: inline-block; border: 2px solid var(--muted); }
+.iso-legend-shape--circle { border-radius: 50%; }
+.plan-grid { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.plan-axis-x { fill: none; stroke: var(--teal); stroke-width: 2.5; }
+.plan-axis-y { fill: none; stroke: var(--violet); stroke-width: 2.5; }
+.plan-axis-label-x { fill: var(--teal-dark); font-family: var(--mono); font-size: 13px; font-weight: 800; }
+.plan-axis-label-y { fill: var(--violet); font-family: var(--mono); font-size: 13px; font-weight: 800; }
+.plan-overflow { fill: var(--muted); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+.plan-marker-concrete { fill: var(--teal-pale); stroke: var(--ink); stroke-width: 2.5; }
+.plan-marker-steel { fill: #fdf1df; stroke: var(--amber); stroke-width: 2.5; }
 .frame-diagram p { margin: -3px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
 .contribution-card, .calculation-card { padding: 20px; }
 .subheading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
