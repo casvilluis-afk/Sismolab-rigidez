@@ -1440,16 +1440,18 @@ def render_analysis_results() -> None:
     """
 
     dof_labels = []
+    force_labels = []
     for level in range(analysis_level_count):
         dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
+        force_labels.extend((f"Fx{level + 1}", f"Fy{level + 1}", f"Mz{level + 1}"))
     force_items = " · ".join(
         f"{label}={_compact_number(value)}"
-        for label, value in zip(dof_labels, result["force_vector"])
+        for label, value in zip(force_labels, result["force_vector"])
     )
     _update_matrix_panel(
         '<p class="matrix-caption">K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G. Orden de grados de libertad: {u<sub>x</sub>, u<sub>y</sub>, θ} por nivel.</p>'
         + _matrix_table(result["global_matrix"], dof_labels)
-        + f'<p class="matrix-caption"><strong>Vector F:</strong> {force_items}</p>'
+        + f'<p class="matrix-caption"><strong>Vector F</strong> (kN y kN·m, mismo orden de niveles): {force_items}</p>'
     )
 
     render_deformation_views(result)
