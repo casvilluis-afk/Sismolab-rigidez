@@ -8,6 +8,7 @@
   --teal-dark: #075d65;
   --teal-pale: #e0f1ef;
   --amber: #d98925;
+  --violet: #5d5fc0;
   --danger: #9c342c;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -125,12 +126,26 @@ select { padding: 8px 10px; }
 
 .frame-diagram, .contribution-card, .calculation-card { border-radius: 14px; }
 .frame-diagram { padding: 16px 18px 13px; }
-.frame-diagram svg { width: 100%; height: auto; display: block; color: var(--teal); }
-.frame-lines { fill: none; stroke: #20464e; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
-.frame-lines .frame-beam { stroke-width: 10; }
-.frame-dimensions { fill: #607177; stroke: #93a4a7; stroke-width: 1.5; font-family: var(--mono); font-size: 13px; }
-.frame-load { fill: var(--teal); stroke: var(--teal); stroke-width: 3; font-family: var(--mono); font-size: 15px; }
-.beam-label { fill: #687b80; font-family: var(--sans); font-size: 13px; }
+.frame-diagram-3d svg { width: 100%; height: auto; display: block; }
+.iso-ground { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.iso-slab { fill: var(--teal-pale); fill-opacity: .92; stroke: var(--teal-dark); stroke-width: 2; stroke-linejoin: round; }
+.iso-column-concrete { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; }
+.iso-column-steel { stroke: var(--amber); stroke-width: 7; stroke-linecap: round; }
+.iso-footing { fill: none; stroke: #20464e; stroke-width: 3; stroke-linecap: round; }
+.iso-axis-x { fill: none; stroke: var(--teal); stroke-width: 3; }
+.iso-axis-y { fill: none; stroke: var(--violet); stroke-width: 3; }
+.iso-arrowhead-x { fill: var(--teal); }
+.iso-arrowhead-y { fill: var(--violet); }
+.iso-axis-x-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.iso-axis-y-label { fill: var(--violet); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.iso-overflow { fill: var(--muted); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+.iso-dim { fill: none; stroke: #93a4a7; stroke-width: 1.5; }
+.iso-dim-label { fill: #607177; font-family: var(--mono); font-size: 12px; }
+.iso-legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; }
+.iso-legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.iso-legend-dot { width: 10px; height: 10px; display: inline-block; border-radius: 50%; }
+.iso-legend-dot--concrete { background: var(--ink); }
+.iso-legend-dot--steel { background: var(--amber); }
 .frame-diagram p { margin: -3px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
 .contribution-card, .calculation-card { padding: 20px; }
 .subheading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }

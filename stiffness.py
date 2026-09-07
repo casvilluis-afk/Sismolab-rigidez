@@ -216,4 +216,3 @@ def convert_group_units(group: ColumnGroup, source: UnitSystem, target: UnitSyst
     else:
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
     return ColumnGroup(**{**asdict(group), "dimension": dimension, "fc": fc})
-    

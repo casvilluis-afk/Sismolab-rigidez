@@ -94,19 +94,12 @@
           </div>
 
           <div class="frame-diagram">
-            <svg viewBox="0 0 500 260" role="img" aria-label="Pórtico idealizado de un nivel con desplazamiento lateral">
-              <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker></defs>
-              <g class="frame-lines">
-                <path d="M112 206 C122 160, 93 108, 112 55" /><path d="M350 206 C360 160, 331 108, 350 55" />
-                <path d="M110 55 L365 55" class="frame-beam" />
-                <path d="M85 218 L139 218 M99 218 L87 232 M112 218 L100 232 M125 218 L113 232 M138 218 L126 232" />
-                <path d="M323 218 L377 218 M337 218 L325 232 M350 218 L338 232 M363 218 L351 232 M376 218 L364 232" />
-              </g>
-              <g class="frame-dimensions"><path d="M62 208 L62 58" /><path d="M55 208 L69 208 M55 58 L69 58" /><text x="31" y="136">h</text><text id="frame-height" x="17" y="158">3,00 m</text></g>
-              <g class="frame-load"><path d="M365 34 L444 34" marker-end="url(#arrow)" /><text x="382" y="22">Δ = 1</text></g>
-              <text x="190" y="80" class="beam-label">viga / losa rígida</text>
-            </svg>
-            <p>Columnas en paralelo: todos los aportes se suman en el entrepiso.</p>
+            <div id="frame-diagram-3d" class="frame-diagram-3d"></div>
+            <p id="diagram-caption">Corte isométrico ilustrativo.</p>
+            <div class="iso-legend">
+              <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--concrete"></i>Concreto</span>
+              <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--steel"></i>Acero</span>
+            </div>
           </div>
 
           <div class="contribution-card">
