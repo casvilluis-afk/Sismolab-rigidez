@@ -118,6 +118,8 @@ select { padding: 8px 10px; }
 .axis-input-row > span { align-self: stretch; display: grid; place-items: center; padding: 0 11px; color: var(--teal-dark); background: var(--teal-pale); border-right: 1px solid #c4ddda; font-family: var(--mono); font-size: 11px; font-weight: 800; }
 .axis-input-row input { min-width: 0; height: 42px; padding: 8px 11px; color: var(--ink); background: white; border: 0; font-weight: 800; }
 .axis-input-row input:focus-visible { outline: none; }
+.axis-coordinate-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 12px; }
+.axis-coordinate-grid label { margin-bottom: 5px; color: #526168; font-size: 11px; }
 .total-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .case-note { display: flex; align-items: center; gap: 11px; margin-top: 15px; padding: 11px 12px; color: #345057; background: #f1f6f5; border-left: 3px solid var(--teal); border-radius: 6px; }
 .case-note > b { color: var(--teal); font-size: 19px; }
@@ -281,6 +283,12 @@ select { padding: 8px 10px; }
 .analysis-floor-list, .analysis-frame-list { display: grid; gap: 8px; }
 #loads-level-list { gap: 18px; }
 .load-level-card { padding: 22px; }
+.mass-geometry-card { margin-top: 18px; padding: 15px; background: #fffaf1; border: 1px solid #e7dac5; border-radius: 10px; }
+.mass-geometry-card > div:first-child { display: grid; gap: 3px; margin-bottom: 13px; }
+.mass-geometry-card > div:first-child strong { font-size: 14px; }
+.mass-geometry-card > div:first-child small, .mass-geometry-card > small { color: var(--muted); font-size: 11px; }
+.mass-geometry-card > small { display: block; margin-top: 10px; line-height: 1.45; }
+.mass-geometry-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 .element-takeoff-card { margin-top: 20px; padding: 16px; background: #f6faf9; border: 1px solid #cbdedb; border-radius: 10px; }
 .element-takeoff-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .element-takeoff-head > div { display: flex; align-items: center; gap: 9px; }
@@ -294,7 +302,7 @@ select { padding: 8px 10px; }
 .column-takeoff-summary > div strong { color: #314149; font-size: 12px; }
 .column-takeoff-summary small { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .column-takeoff-summary output { color: var(--teal-dark); font-family: var(--mono); font-size: 11px; font-weight: 800; text-align: right; }
-.beam-takeoff-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.beam-takeoff-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
 .beam-takeoff-fields .field-block > input { width: 100%; min-width: 0; height: 42px; padding: 8px 10px; color: var(--ink); background: white; border: 1px solid var(--border); border-radius: 8px; font-weight: 700; }
 .element-takeoff-result { margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .element-takeoff-result strong { color: var(--ink); font-family: var(--mono); }
@@ -369,6 +377,36 @@ select { padding: 8px 10px; }
 
 .analysis-table-card h3 { margin: 0 0 5px; font-size: 16px; }
 .analysis-table-card > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.floor-takeoff-list { display: grid; gap: 12px; }
+.floor-takeoff-detail { overflow: hidden; background: #fbfcfc; border: 1px solid var(--border); border-radius: 10px; }
+.floor-takeoff-detail > summary { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 15px; cursor: pointer; list-style: none; }
+.floor-takeoff-detail > summary::-webkit-details-marker { display: none; }
+.floor-takeoff-detail > summary > div { display: flex; align-items: center; gap: 10px; }
+.floor-takeoff-detail > summary > div:first-child > span { width: 38px; height: 38px; display: grid; flex: 0 0 auto; place-items: center; color: var(--teal-dark); background: var(--teal-pale); border: 1px solid #b8deda; border-radius: 50%; font-family: var(--mono); font-size: 11px; font-weight: 800; }
+.floor-takeoff-detail > summary > div:first-child > div { display: grid; gap: 2px; }
+.floor-takeoff-detail > summary strong { font-size: 14px; }
+.floor-takeoff-detail > summary small { color: var(--muted); font-size: 11px; }
+.floor-takeoff-detail > summary > div:last-child { flex-wrap: wrap; justify-content: flex-end; color: var(--muted); font-family: var(--mono); font-size: 11px; text-align: right; }
+.floor-takeoff-detail > summary b { color: var(--teal-dark); font-family: var(--sans); font-size: 11px; }
+.floor-takeoff-detail[open] > summary { background: #f0f7f6; border-bottom: 1px solid var(--border); }
+.floor-takeoff-detail[open] > summary b { font-size: 0; }
+.floor-takeoff-detail[open] > summary b::after { content: "ocultar detalle"; font-size: 11px; }
+.floor-takeoff-body { padding: 16px; }
+.takeoff-mass-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin-bottom: 18px; }
+.takeoff-mass-summary > div { min-width: 0; padding: 11px; background: var(--ink); border-radius: 8px; }
+.takeoff-mass-summary span { display: block; margin-bottom: 5px; color: #a9c4c6; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.takeoff-mass-summary strong { display: block; overflow: hidden; color: white; font-family: var(--mono); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.takeoff-table-section { margin-top: 16px; padding-top: 15px; border-top: 1px solid #e1e7e5; }
+.takeoff-table-section > div:first-child, .takeoff-paired-table > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
+.takeoff-table-section h4 { margin: 0; font-size: 13px; }
+.takeoff-table-section > div:first-child > span, .takeoff-paired-table > div:first-child > span { color: var(--muted); font-size: 10px; text-align: right; }
+.takeoff-table-section--paired { display: grid; gap: 18px; }
+.takeoff-paired-table + .takeoff-paired-table { padding-top: 15px; border-top: 1px dashed var(--border); }
+.detailed-takeoff-table { min-width: 1180px; }
+.takeoff-paired-table .detailed-takeoff-table { min-width: 920px; }
+.data-table tfoot th, .data-table tfoot td { color: var(--ink); background: #eef5f4; border-top: 2px solid #9bb4b1; font-weight: 800; }
+.takeoff-gravity-note { margin: 16px 0 0; padding: 10px 12px; color: #526168; background: #f1f5f4; border-radius: 7px; font-size: 11px; line-height: 1.5; }
+.seismic-summary-table { min-width: 820px; }
 .secondary-table-title { margin-top: 24px !important; padding-top: 20px; border-top: 1px solid var(--border); }
 .data-table { min-width: 100%; border-collapse: collapse; font-size: 12px; }
 .element-takeoff-table { min-width: 930px; }
@@ -448,6 +486,7 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .analysis-transition > * { grid-column: 1; }
   .analysis-method-grid { grid-template-columns: 1fr; }
   .beam-takeoff-fields { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .takeoff-mass-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
 @media (max-width: 620px) {
@@ -471,7 +510,12 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .load-level-card { padding: 18px; }
   .element-takeoff-head, .column-takeoff-summary { align-items: flex-start; flex-direction: column; }
   .column-takeoff-summary output { text-align: left; }
-  .beam-takeoff-fields { grid-template-columns: 1fr; }
+  .axis-coordinate-grid, .mass-geometry-fields, .beam-takeoff-fields { grid-template-columns: 1fr; }
+  .floor-takeoff-detail > summary { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .floor-takeoff-detail > summary > div:last-child { justify-content: flex-start; text-align: left; }
+  .takeoff-mass-summary { grid-template-columns: 1fr; }
+  .takeoff-table-section > div:first-child, .takeoff-paired-table > div:first-child { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .takeoff-table-section > div:first-child > span, .takeoff-paired-table > div:first-child > span { text-align: left; }
   .local-matrix-title { flex-direction: column; }
   .total-grid { grid-template-columns: 1fr; }
   .total-result { grid-template-columns: auto minmax(0,1fr); }

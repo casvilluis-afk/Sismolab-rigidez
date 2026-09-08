@@ -26,10 +26,16 @@ from stiffness import (
 )
 from loads import (
     CATEGORY_CV_FACTOR,
+    CONCRETE_UNIT_WEIGHT,
+    GRAVITY_ACCELERATION,
     LIVE_LOAD_PRESETS,
+    ROOF_CV_FACTOR,
     LevelLoad,
     SeismicSiteParams,
     beam_takeoff,
+    combine_mass_properties,
+    component_mass_properties,
+    level_gravity_breakdown,
     live_load_preset,
     static_seismic_forces,
 )
@@ -121,10 +127,19 @@ def get_load_level(level_id: str) -> LevelLoad | None:
 def column_takeoff(story_height_m: float) -> dict[str, float | int]:
     """Metrado de las columnas definidas en Rigidez para un entrepiso."""
 
-    total_count = 0
-    total_volume = 0.0
-    total_weight = 0.0
-    for group in groups:
+    rows = column_takeoff_rows(story_height_m)
+    return {
+        "count": sum(int(row["quantity"]) for row in rows),
+        "volume": sum(float(row["volume"]) for row in rows),
+        "weight": sum(float(row["weight"]) for row in rows),
+    }
+
+
+def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
+    """Desglose de columnas por grupo, incluyendo masa y centroide en planta."""
+
+    rows: list[dict[str, object]] = []
+    for index, group in enumerate(groups):
         dimension_m = group.dimension / (1_000.0 if units == "SI" else 100.0)
         section_area = (
             dimension_m**2
@@ -134,14 +149,23 @@ def column_takeoff(story_height_m: float) -> dict[str, float | int]:
         quantity = max(0, int(group.quantity))
         volume = quantity * section_area * max(0.0, story_height_m)
         unit_weight = 24.0 if group.material == "concrete" else 78.5
-        total_count += quantity
-        total_volume += volume
-        total_weight += volume * unit_weight
-    return {
-        "count": total_count,
-        "volume": total_volume,
-        "weight": total_weight,
-    }
+        weight = volume * unit_weight
+        mass = component_mass_properties(weight, group.x0, group.y0)
+        rows.append(
+            {
+                "number": index + 1,
+                "description": f"C{index + 1} · Eje {group.axis}",
+                "quantity": quantity,
+                "shape": shape_name(group.shape),
+                "dimension": dimension_m,
+                "height": max(0.0, story_height_m),
+                "unit_weight": unit_weight,
+                "volume": volume,
+                "weight": weight,
+                **mass,
+            }
+        )
+    return rows
 
 
 def column_takeoffs_for_levels() -> list[dict[str, float | int]]:
@@ -268,7 +292,11 @@ def group_card(group: ColumnGroup, index: int) -> str:
             <span>EJE</span>
             <input id="axis-{group.id}" type="text" maxlength="12" value="{axis_value}" placeholder="1, 2, A…" data-group="{group.id}" data-field="axis" />
           </div>
-          <small>Las columnas del grupo se repartirán sobre esta línea en el plano.</small>
+          <div class="axis-coordinate-grid">
+            <div><label for="grid-x-{group.id}">Centro X₀</label><div class="input-with-unit"><input id="grid-x-{group.id}" type="number" step="0.1" value="{input_number(group.x0)}" data-group="{group.id}" data-field="analysis-frame-x" /><span>m</span></div></div>
+            <div><label for="grid-y-{group.id}">Centro Y₀</label><div class="input-with-unit"><input id="grid-y-{group.id}" type="number" step="0.1" value="{input_number(group.y0)}" data-group="{group.id}" data-field="analysis-frame-y" /><span>m</span></div></div>
+          </div>
+          <small>X₀,Y₀ representan el centro del grupo y se reutilizan en el metrado de masa y en el análisis.</small>
         </div>
       </div>
       <div class="form-grid">
@@ -1310,25 +1338,7 @@ CR = (x_CM + q_y ; y_CM - q_x)</div>
       </div>
     """
 
-    # Paso 8 — reparto de fuerzas por eje
-    rows8 = []
-    for frame in frames:
-        for level in range(levels - 1, -1, -1):
-            moment = frame["end_moments"][level]
-            moment_text = "—" if moment is None else format_number(moment, 3)
-            rows8.append(
-                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['story_shears'][level], 3)}</td>"
-                f"<td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
-            )
-    step8 = f"""
-      <div class="step-block">
-        <h4><span class="step-badge">8</span>Reparto de fuerzas por eje</h4>
-        <p><code>δ_eje = [G]{{U}}</code>, luego <code>V_eje = [K_eje]·δ_eje</code>. El cortante de cada eje se reparte entre sus columnas iguales; el momento Vh/2 solo aplica a uniones empotrada–empotrada.</p>
-        <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{"".join(rows8)}</tbody></table></div>
-      </div>
-    """
-
-    return step0 + step1 + step2 + step3 + step4 + step5 + step6 + step7 + step8
+    return step0 + step1 + step2 + step3 + step4 + step5 + step6 + step7
 
 
 def toggle_details_panel(selector: str) -> None:
@@ -1827,6 +1837,16 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         <small>Al elegir un uso se llena el campo CV; puedes seguir editándolo a mano.</small>
       </div>
 
+      <section class="mass-geometry-card" aria-labelledby="mass-geometry-{level.id}">
+        <div><strong id="mass-geometry-{level.id}">Geometría de masa del nivel</strong><small>Centro de la losa y de las cargas superficiales</small></div>
+        <div class="mass-geometry-fields">
+          <div class="field-block"><label for="load-center-x-{level.id}">Centro X₀</label><div class="input-with-unit"><input id="load-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.center_x)}" data-level-id="{level.id}" data-field="load-center-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-center-y-{level.id}">Centro Y₀</label><div class="input-with-unit"><input id="load-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.center_y)}" data-level-id="{level.id}" data-field="load-center-y" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-slab-thickness-{level.id}">Espesor de losa</label><div class="input-with-unit"><input id="load-slab-thickness-{level.id}" type="number" min="0" step="0.01" value="{input_number(level.slab_thickness)}" data-level-id="{level.id}" data-field="load-slab-thickness" /><span>m</span></div></div>
+        </div>
+        <small>CM incluye el peso de esta losa. El excedente se reporta como acabados y tabiquería.</small>
+      </section>
+
       <section class="element-takeoff-card" aria-labelledby="takeoff-{level.id}">
         <div class="element-takeoff-head">
           <div><span aria-hidden="true">▦</span><div><strong id="takeoff-{level.id}">Metrado de elementos</strong><small>Se suma a la carga muerta superficial</small></div></div>
@@ -1841,6 +1861,8 @@ def load_level_card(level: LevelLoad, index: int) -> str:
           <div class="field-block"><label for="load-beam-width-{level.id}">Ancho b</label><div class="input-with-unit"><input id="load-beam-width-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_width)}" data-level-id="{level.id}" data-field="load-beam-width" /><span>m</span></div></div>
           <div class="field-block"><label for="load-beam-depth-{level.id}">Peralte h</label><div class="input-with-unit"><input id="load-beam-depth-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_depth)}" data-level-id="{level.id}" data-field="load-beam-depth" /><span>m</span></div></div>
           <div class="field-block"><label for="load-beam-length-{level.id}">Longitud por viga</label><div class="input-with-unit"><input id="load-beam-length-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.beam_length)}" data-level-id="{level.id}" data-field="load-beam-length" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-center-x-{level.id}">Centro de vigas X₀</label><div class="input-with-unit"><input id="load-beam-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_x)}" data-level-id="{level.id}" data-field="load-beam-center-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-center-y-{level.id}">Centro de vigas Y₀</label><div class="input-with-unit"><input id="load-beam-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_y)}" data-level-id="{level.id}" data-field="load-beam-center-y" /><span>m</span></div></div>
         </div>
         <p class="element-takeoff-result">Vigas del nivel: <strong id="load-beams-summary-{level.id}">{level.beam_count} unid. · {format_number(beam_volume, 3)} m³ · {format_number(beam_weight, 1)} kN</strong></p>
       </section>
@@ -1895,19 +1917,137 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
         <p><code>P = CM·A + W_columnas + W_vigas + %CV·CV·A</code>, con %CV = 25% en techos y {format_number(cv_pct, 0)}% en el resto de niveles (categoría {escape(site.category)}).</p>
       </div>
       <div class="step-block">
-        <h4><span class="step-badge">3</span>Cortante en la base</h4>
+        <h4><span class="step-badge">3</span>Masa y centro de masa</h4>
+        <p><code>m_j = W_j/g</code>, <code>X_CM = Σ(m_j·X_j)/Σm_j</code> y <code>Y_CM = Σ(m_j·Y_j)/Σm_j</code>, usando g = {format_number(GRAVITY_ACCELERATION, 2)} m/s² y la fracción sísmica de la carga viva.</p>
+      </div>
+      <div class="step-block">
+        <h4><span class="step-badge">4</span>Cortante en la base</h4>
         <p><code>V = (Z·U·C·S / R) · ΣP</code> = {format_number(result.base_shear_coefficient, 4)} × {format_number(result.weight_total, 1)} kN = <strong>{format_number(result.base_shear, 1)} kN</strong></p>
       </div>
       <div class="step-block">
-        <h4><span class="step-badge">4</span>Distribución en altura</h4>
+        <h4><span class="step-badge">5</span>Distribución en altura</h4>
         <p><code>F_i = V · (P_i · h_i^k) / Σ(P_j · h_j^k)</code>, k = {format_number(result.height_k, 2)}</p>
       </div>
     """
 
 
+def _mass_cells(properties: dict[str, float]) -> str:
+    return (
+        f"<td>{format_number(properties['weight'], 2)}</td>"
+        f"<td>{format_number(properties['mass'], 3)}</td>"
+        f"<td>{format_number(properties['x'], 3)}</td>"
+        f"<td>{format_number(properties['y'], 3)}</td>"
+        f"<td>{format_number(properties['mx'], 3)}</td>"
+        f"<td>{format_number(properties['my'], 3)}</td>"
+    )
+
+
+def _floor_takeoff_html(
+    level: LevelLoad,
+    index: int,
+    result,
+    column_rows: list[dict[str, object]],
+    site: SeismicSiteParams,
+) -> tuple[str, dict[str, float]]:
+    """Tablas de metrado y centro de masa de un nivel."""
+
+    breakdown = level_gravity_breakdown(level, result.level_column_weights[index])
+    beam_volume, beam_weight = beam_takeoff(level)
+    beam_mass = component_mass_properties(beam_weight, level.beam_center_x, level.beam_center_y)
+    slab_mass = component_mass_properties(breakdown["slab_weight"], level.center_x, level.center_y)
+    other_dead_mass = component_mass_properties(
+        breakdown["other_surface_dead"], level.center_x, level.center_y
+    )
+    live_factor = ROOF_CV_FACTOR if level.is_roof else CATEGORY_CV_FACTOR.get(site.category, 0.25)
+    live_mass_full = component_mass_properties(breakdown["live_total"], level.center_x, level.center_y)
+    live_mass_participating = component_mass_properties(
+        breakdown["live_total"], level.center_x, level.center_y, live_factor
+    )
+    seismic_components = [dict(row) for row in column_rows]
+    seismic_components.extend((beam_mass, slab_mass, other_dead_mass, live_mass_participating))
+    mass_total = combine_mass_properties(seismic_components)
+
+    column_table_rows = []
+    for row in column_rows:
+        shape_text = str(row["shape"])
+        dimension_prefix = "Ø" if shape_text == "circular" else "a ="
+        column_table_rows.append(
+            f"<tr><td>{row['number']}</td><td>{escape(str(row['description']))}</td>"
+            f"<td>{row['quantity']}</td><td>{escape(shape_text.capitalize())}</td>"
+            f"<td>{dimension_prefix} {format_number(float(row['dimension']), 3)}</td>"
+            f"<td>{format_number(float(row['height']), 2)}</td>"
+            f"<td>{format_number(float(row['unit_weight']), 1)}</td>"
+            f"<td>{format_number(float(row['volume']), 3)}</td>{_mass_cells(row)}</tr>"
+        )
+    column_volume = sum(float(row["volume"]) for row in column_rows)
+    column_mass_total = combine_mass_properties([dict(row) for row in column_rows])
+
+    beam_row = f"""
+      <tr><td>1</td><td>Vigas del nivel</td><td>{level.beam_count}</td>
+      <td>{format_number(level.beam_length, 2)}</td><td>{format_number(level.beam_width, 3)}</td>
+      <td>{format_number(level.beam_depth, 3)}</td><td>{format_number(CONCRETE_UNIT_WEIGHT, 1)}</td>
+      <td>{format_number(beam_volume, 3)}</td>{_mass_cells(beam_mass)}</tr>
+    """
+    slab_row = f"""
+      <tr><td>1</td><td>Losa del nivel</td><td>{format_number(level.area, 2)}</td>
+      <td>{format_number(level.slab_thickness, 3)}</td><td>{format_number(CONCRETE_UNIT_WEIGHT, 1)}</td>
+      <td>{format_number(breakdown['slab_volume'], 3)}</td>{_mass_cells(slab_mass)}</tr>
+    """
+    other_dead_intensity = breakdown["other_surface_dead"] / level.area if level.area else 0.0
+    other_dead_row = f"""
+      <tr><td>1</td><td>Acabados y tabiquería</td><td>{format_number(level.area, 2)}</td>
+      <td>{format_number(other_dead_intensity, 3)}</td>{_mass_cells(other_dead_mass)}</tr>
+    """
+    live_row = f"""
+      <tr><td>1</td><td>Sobrecarga de uso</td><td>{format_number(level.area, 2)}</td>
+      <td>{format_number(level.cv, 3)}</td>{_mass_cells(live_mass_full)}
+      <td>{format_number(live_factor * 100.0, 0)}%</td></tr>
+    """
+    open_attribute = " open" if index == 0 else ""
+    html = f"""
+      <details class="floor-takeoff-detail"{open_attribute}>
+        <summary>
+          <div><span>N{index + 1}</span><div><strong>{escape(str(level.label))}</strong><small>{"Techo / azotea" if level.is_roof else "Piso"} · metrado y masa</small></div></div>
+          <div><span>CM = ({format_number(mass_total['center_x'], 3)} ; {format_number(mass_total['center_y'], 3)}) m</span><b>ver detalle</b></div>
+        </summary>
+        <div class="floor-takeoff-body">
+          <div class="takeoff-mass-summary">
+            <div><span>Peso sísmico P<sub>i</sub></span><strong>{format_number(result.level_weights[index], 2)} kN</strong></div>
+            <div><span>Masa sísmica</span><strong>{format_number(mass_total['mass'], 3)} t</strong></div>
+            <div><span>Centro de masa X<sub>CM</sub></span><strong>{format_number(mass_total['center_x'], 3)} m</strong></div>
+            <div><span>Centro de masa Y<sub>CM</sub></span><strong>{format_number(mass_total['center_y'], 3)} m</strong></div>
+          </div>
+
+          <section class="takeoff-table-section">
+            <div><h4>Columnas</h4><span>Una fila por grupo definido en Rigidez</span></div>
+            <div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Cant.</th><th>Sección</th><th>Dim. (m)</th><th>Altura (m)</th><th>γ (kN/m³)</th><th>Vol. (m³)</th><th>Peso (kN)</th><th>Masa (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th></tr></thead><tbody>{''.join(column_table_rows)}</tbody><tfoot><tr><th colspan="7">Total columnas</th><td>{format_number(column_volume, 3)}</td><td>{format_number(column_mass_total['weight'], 2)}</td><td>{format_number(column_mass_total['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(column_mass_total['mx'], 3)}</td><td>{format_number(column_mass_total['my'], 3)}</td></tr></tfoot></table></div>
+          </section>
+
+          <section class="takeoff-table-section">
+            <div><h4>Vigas</h4><span>Grupo típico ingresado para este nivel</span></div>
+            <div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Cant.</th><th>Largo (m)</th><th>Ancho (m)</th><th>Peralte (m)</th><th>γ (kN/m³)</th><th>Vol. (m³)</th><th>Peso (kN)</th><th>Masa (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th></tr></thead><tbody>{beam_row}</tbody><tfoot><tr><th colspan="7">Total vigas</th><td>{format_number(beam_volume, 3)}</td><td>{format_number(beam_mass['weight'], 2)}</td><td>{format_number(beam_mass['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(beam_mass['mx'], 3)}</td><td>{format_number(beam_mass['my'], 3)}</td></tr></tfoot></table></div>
+          </section>
+
+          <section class="takeoff-table-section">
+            <div><h4>Losa</h4><span>Peso propio calculado con γ = {format_number(CONCRETE_UNIT_WEIGHT, 1)} kN/m³</span></div>
+            <div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Área (m²)</th><th>Espesor (m)</th><th>γ (kN/m³)</th><th>Vol. (m³)</th><th>Peso (kN)</th><th>Masa (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th></tr></thead><tbody>{slab_row}</tbody><tfoot><tr><th colspan="5">Total losa</th><td>{format_number(breakdown['slab_volume'], 3)}</td><td>{format_number(slab_mass['weight'], 2)}</td><td>{format_number(slab_mass['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(slab_mass['mx'], 3)}</td><td>{format_number(slab_mass['my'], 3)}</td></tr></tfoot></table></div>
+          </section>
+
+          <section class="takeoff-table-section takeoff-table-section--paired">
+            <div class="takeoff-paired-table"><div><h4>Carga muerta adicional</h4><span>CM menos el peso propio de la losa</span></div><div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Área (m²)</th><th>q (kN/m²)</th><th>Peso (kN)</th><th>Masa (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th></tr></thead><tbody>{other_dead_row}</tbody><tfoot><tr><th colspan="4">Total carga muerta adicional</th><td>{format_number(other_dead_mass['weight'], 2)}</td><td>{format_number(other_dead_mass['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(other_dead_mass['mx'], 3)}</td><td>{format_number(other_dead_mass['my'], 3)}</td></tr></tfoot></table></div></div>
+            <div class="takeoff-paired-table"><div><h4>Carga viva</h4><span>La participación indicada se usa en la masa sísmica</span></div><div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Área (m²)</th><th>q (kN/m²)</th><th>Peso (kN)</th><th>Masa total (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th><th>% E.030</th></tr></thead><tbody>{live_row}</tbody><tfoot><tr><th colspan="4">Total carga viva</th><td>{format_number(live_mass_full['weight'], 2)}</td><td>{format_number(live_mass_full['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(live_mass_full['mx'], 3)}</td><td>{format_number(live_mass_full['my'], 3)}</td><td>{format_number(live_factor * 100.0, 0)}%</td></tr></tfoot></table></div></div>
+          </section>
+          <p class="takeoff-gravity-note">Conversión de peso a masa: m = W / g, con g = {format_number(GRAVITY_ACCELERATION, 2)} m/s². Para X<sub>CM</sub>,Y<sub>CM</sub> se usa la masa sísmica, incluida la fracción de carga viva que corresponde.</p>
+        </div>
+      </details>
+    """
+    return html, mass_total
+
+
 def render_loads_results() -> None:
     warning = by_id("loads-warning")
     site = _build_site_params()
+    column_rows_by_level = [column_takeoff_rows(level.height) for level in load_levels]
     column_takeoffs = column_takeoffs_for_levels()
     column_weights = [float(item["weight"]) for item in column_takeoffs]
     for level, takeoff in zip(load_levels, column_takeoffs):
@@ -1958,31 +2098,37 @@ def render_loads_results() -> None:
     force_rows = [(f"Nivel {index + 1}", result.level_forces[index]) for index in order]
     by_id("loads-force-chart").innerHTML = _bar_chart_svg(force_rows, "kN", "chart-bar-teal")
 
+    takeoff_cards = []
+    mass_properties_by_level: list[dict[str, float]] = []
+    for index, level in enumerate(load_levels):
+        card_html, mass_properties = _floor_takeoff_html(
+            level, index, result, column_rows_by_level[index], site
+        )
+        takeoff_cards.append(card_html)
+        mass_properties_by_level.append(mass_properties)
+
     seismic_rows = []
-    element_rows = []
     cumulative_shear = 0.0
     for index in order:
         level = load_levels[index]
         cumulative_shear += result.level_forces[index]
-        element_rows.append(
-            f"<tr><td>{escape(str(level.label))}</td><td>{column_takeoffs[index]['count']}</td>"
-            f"<td>{format_number(column_takeoffs[index]['volume'], 3)}</td><td>{format_number(result.level_column_weights[index], 1)}</td>"
-            f"<td>{level.beam_count}</td><td>{format_number(result.level_beam_volumes[index], 3)}</td>"
-            f"<td>{format_number(result.level_beam_weights[index], 1)}</td><td>{format_number(result.level_surface_dead_loads[index], 1)}</td>"
-            f"<td>{format_number(result.level_dead_loads[index], 1)}</td></tr>"
-        )
+        mass_properties = mass_properties_by_level[index]
         seismic_rows.append(
             f"<tr><td>{escape(str(level.label))}</td><td>{format_number(level.area, 1)}</td>"
-            f"<td>{format_number(result.level_weights[index], 1)}</td><td>{format_number(result.level_forces[index], 1)}</td>"
+            f"<td>{format_number(result.level_weights[index], 1)}</td>"
+            f"<td>{format_number(mass_properties['mass'], 3)}</td>"
+            f"<td>{format_number(mass_properties['center_x'], 3)}</td>"
+            f"<td>{format_number(mass_properties['center_y'], 3)}</td>"
+            f"<td>{format_number(result.level_forces[index], 1)}</td>"
             f"<td>{format_number(cumulative_shear, 1)}</td></tr>"
         )
     by_id("loads-table").innerHTML = f"""
-      <h3>Metrado de elementos estructurales</h3>
-      <p>Las columnas proceden de los grupos definidos en Rigidez. Las vigas usan las dimensiones y cantidades ingresadas en cada nivel.</p>
-      <div class="table-scroll"><table class="data-table element-takeoff-table"><thead><tr><th>Nivel</th><th>N° col.</th><th>Vol. col. (m³)</th><th>W col. (kN)</th><th>N° vigas</th><th>Vol. vigas (m³)</th><th>W vigas (kN)</th><th>CM superficial (kN)</th><th>CM total (kN)</th></tr></thead><tbody>{"".join(element_rows)}</tbody></table></div>
+      <h3>Metrado de cargas y centro de masa por piso</h3>
+      <p>Abre un nivel para revisar columnas, vigas, losa, carga muerta, carga viva y sus momentos de masa.</p>
+      <div class="floor-takeoff-list">{"".join(takeoff_cards)}</div>
       <h3 class="secondary-table-title">Resumen sísmico por nivel</h3>
-      <p>El cortante acumulado se calcula de techo a base, igual que la fuerza sísmica que usará la Etapa 3.</p>
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>Área (m²)</th><th>P (kN)</th><th>F (kN)</th><th>V acumulado (kN)</th></tr></thead><tbody>{"".join(seismic_rows)}</tbody></table></div>
+      <p>El centro de masa se obtiene con X<sub>CM</sub> = Σ(M·X)/ΣM y Y<sub>CM</sub> = Σ(M·Y)/ΣM. El cortante se acumula de techo a base.</p>
+      <div class="table-scroll"><table class="data-table seismic-summary-table"><thead><tr><th>Nivel</th><th>Área (m²)</th><th>P (kN)</th><th>Masa (t)</th><th>X<sub>CM</sub> (m)</th><th>Y<sub>CM</sub> (m)</th><th>F (kN)</th><th>V acumulado (kN)</th></tr></thead><tbody>{"".join(seismic_rows)}</tbody></table></div>
     """
 
     _update_details_panel("loads-steps", ".steps-card", _loads_steps_html(result, site))
@@ -2043,10 +2189,10 @@ STAGE_INTRO = {
     "loads": {
         "title": "SismoLab · Metrado de cargas",
         "eyebrow": "METRADO DE CARGAS · E.020 / E.030",
-        "heading": "Peso sísmico y fuerza estática por nivel",
-        "copy": "Define las cargas gravitacionales de cada nivel y los parámetros de sitio para obtener el peso sísmico y la fuerza estática que alimentarán el análisis.",
+        "heading": "Metrado, centro de masa y fuerza por nivel",
+        "copy": "Desglosa columnas, vigas, losa, cargas muertas y vivas para obtener el peso, el centro de masa y la fuerza sísmica de cada piso.",
         "note_title": "Método actual",
-        "note_copy": "Metrado por áreas tributarias y método estático equivalente (E.030), con %CV según categoría de edificación.",
+        "note_copy": "Metrado por componentes y método estático equivalente (E.030), con %CV según categoría de edificación.",
     },
     "analysis": {
         "title": "SismoLab · Análisis estructural",
@@ -2373,6 +2519,11 @@ def handle_input(event):
         "load-beam-width",
         "load-beam-depth",
         "load-beam-length",
+        "load-slab-thickness",
+        "load-center-x",
+        "load-center-y",
+        "load-beam-center-x",
+        "load-beam-center-y",
     ):
         level = get_load_level(str(target.getAttribute("data-level-id")))
         if level is None:
@@ -2390,6 +2541,11 @@ def handle_input(event):
                 "load-beam-width": "beam_width",
                 "load-beam-depth": "beam_depth",
                 "load-beam-length": "beam_length",
+                "load-slab-thickness": "slab_thickness",
+                "load-center-x": "center_x",
+                "load-center-y": "center_y",
+                "load-beam-center-x": "beam_center_x",
+                "load-beam-center-y": "beam_center_y",
             }[field]
             setattr(level, attribute, parse_number(target.value))
         render_loads_results()
@@ -2411,7 +2567,7 @@ def handle_input(event):
     elif field == "analysis-frame-beta":
         group.beta = parse_number(target.value)
     render_results()
-    if field in ("quantity", "dimension"):
+    if field in ("quantity", "dimension", "axis", "analysis-frame-x", "analysis-frame-y"):
         render_loads_results()
     render_analysis_results()
 

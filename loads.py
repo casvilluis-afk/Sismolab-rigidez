@@ -7,6 +7,7 @@ Módulo sin dependencias del navegador, reutilizable igual que stiffness.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Literal
 
 
@@ -30,6 +31,11 @@ class LevelLoad:
     beam_width: float = 0.25  # m
     beam_depth: float = 0.40  # m
     beam_length: float = 4.0  # m por viga
+    slab_thickness: float = 0.20  # m
+    center_x: float = 2.5  # m, centroide de losa y cargas superficiales
+    center_y: float = 2.0  # m
+    beam_center_x: float = 2.5  # m, centroide del grupo de vigas
+    beam_center_y: float = 2.0  # m
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +83,46 @@ USE_FACTOR_U: dict[UseCategory, float] = {
 }
 
 CONCRETE_UNIT_WEIGHT = 24.0  # kN/m³, valor usual para concreto armado.
+GRAVITY_ACCELERATION = 9.81  # m/s²
+
+
+def component_mass_properties(
+    weight_kn: float,
+    center_x_m: float,
+    center_y_m: float,
+    participation: float = 1.0,
+) -> dict[str, float]:
+    """Peso participante, masa equivalente y momentos de masa de un componente."""
+
+    participating_weight = max(0.0, float(weight_kn)) * max(0.0, float(participation))
+    mass = participating_weight / GRAVITY_ACCELERATION
+    center_x = float(center_x_m)
+    center_y = float(center_y_m)
+    return {
+        "weight": participating_weight,
+        "mass": mass,
+        "x": center_x,
+        "y": center_y,
+        "mx": mass * center_x,
+        "my": mass * center_y,
+    }
+
+
+def combine_mass_properties(components: list[dict[str, float]]) -> dict[str, float]:
+    """Combina componentes y obtiene el centro de masa XCM,YCM."""
+
+    total_weight = sum(float(item["weight"]) for item in components)
+    total_mass = sum(float(item["mass"]) for item in components)
+    moment_x = sum(float(item["mx"]) for item in components)
+    moment_y = sum(float(item["my"]) for item in components)
+    return {
+        "weight": total_weight,
+        "mass": total_mass,
+        "mx": moment_x,
+        "my": moment_y,
+        "center_x": moment_x / total_mass if total_mass else 0.0,
+        "center_y": moment_y / total_mass if total_mass else 0.0,
+    }
 
 
 def beam_takeoff(level: LevelLoad) -> tuple[float, float]:
@@ -96,10 +142,16 @@ def level_gravity_breakdown(level: LevelLoad, column_weight_kn: float = 0.0) -> 
 
     beam_volume, beam_weight = beam_takeoff(level)
     surface_dead = float(level.cm) * float(level.area)
+    slab_volume = float(level.slab_thickness) * float(level.area)
+    slab_weight = slab_volume * CONCRETE_UNIT_WEIGHT
+    other_surface_dead = max(0.0, surface_dead - slab_weight)
     live_load = float(level.cv) * float(level.area)
     column_weight = max(0.0, float(column_weight_kn))
     return {
         "surface_dead": surface_dead,
+        "slab_volume": slab_volume,
+        "slab_weight": slab_weight,
+        "other_surface_dead": other_surface_dead,
         "column_weight": column_weight,
         "beam_volume": beam_volume,
         "beam_weight": beam_weight,
@@ -279,8 +331,29 @@ def static_seismic_forces(
     for index, level in enumerate(levels):
         if level.area <= 0 or level.height <= 0:
             raise ValueError(f"El área y la altura del nivel {index + 1} deben ser mayores que cero.")
-        if min(level.cm, level.cv, level.beam_count, level.beam_width, level.beam_depth, level.beam_length) < 0:
+        numeric_values = (
+            level.cm,
+            level.cv,
+            level.beam_count,
+            level.beam_width,
+            level.beam_depth,
+            level.beam_length,
+            level.slab_thickness,
+            level.center_x,
+            level.center_y,
+            level.beam_center_x,
+            level.beam_center_y,
+        )
+        if not all(isfinite(float(value)) for value in numeric_values):
+            raise ValueError(f"Los datos geométricos del nivel {index + 1} deben ser números válidos.")
+        if min(level.cm, level.cv, level.beam_count, level.beam_width, level.beam_depth, level.beam_length, level.slab_thickness) < 0:
             raise ValueError(f"Las cargas y dimensiones del nivel {index + 1} no pueden ser negativas.")
+        slab_load = level.slab_thickness * CONCRETE_UNIT_WEIGHT
+        if level.cm + 1e-9 < slab_load:
+            raise ValueError(
+                f"En el nivel {index + 1}, CM debe ser al menos {slab_load:.2f} kN/m² "
+                "para incluir el peso de la losa ingresada."
+            )
 
     z = ZONE_FACTORS.get(site.zone, ZONE_FACTORS["2"])
     u = USE_FACTOR_U.get(site.category, 1.0)
