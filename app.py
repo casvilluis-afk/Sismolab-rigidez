@@ -1216,26 +1216,29 @@ CR = (x_CM + q_y ; y_CM - q_x)</div>
 
 
 def toggle_details_panel(selector: str) -> None:
-    """Abre/cierra un <details> con un único clic (ver nota en el uso original).
+    """Abre/cierra un panel colapsable con un único clic.
 
-    Generalizado para reutilizarse tanto en 'Matriz global K' como en
-    'Desarrollo paso a paso': el clic llega con preventDefault ya aplicado,
-    así el toggle nativo del navegador nunca compite con este cambio
-    explícito del atributo 'open'.
+    Antes usábamos <details>/<summary> nativos con event.preventDefault()
+    para evitar que el toggle nativo del navegador compitiera con el de
+    Python. Eso fallaba en la práctica: PyScript despacha el evento de clic
+    a Python de forma asíncrona, así que para cuando preventDefault() se
+    ejecutaba, el navegador ya había aplicado su propio toggle nativo — el
+    resultado neto de los dos toggles encontrados era que no cambiaba nada
+    visualmente. Ahora el panel es un <div>/<button> sin ningún
+    comportamiento nativo que interceptar: el estado abierto/cerrado vive
+    exclusivamente en la clase 'is-open', que solo Python controla.
     """
-    details = document.querySelector(selector)
-    if hasattr(details, "open"):
-        details.open = not bool(details.open)
+    container = document.querySelector(selector)
+    if hasattr(container, "classList"):
+        is_open = bool(container.classList.contains("is-open"))
+        container.classList.toggle("is-open")
+        toggle_button = container.querySelector(".details-toggle")
+        if hasattr(toggle_button, "setAttribute"):
+            toggle_button.setAttribute("aria-expanded", "false" if is_open else "true")
 
 
 def _update_details_panel(panel_id: str, selector: str, html: str) -> None:
-    details = document.querySelector(selector)
-    was_open = False
-    if hasattr(details, "open"):
-        was_open = bool(details.open)
     by_id(panel_id).innerHTML = html
-    if hasattr(details, "open"):
-        details.open = was_open
 
 
 def _footprint_bounds() -> tuple[float, float, float, float]:
@@ -1812,7 +1815,6 @@ def handle_click(event):
     if action == "units":
         change_units(str(action_element.getAttribute("data-value")))
     elif action == "toggle-details":
-        event.preventDefault()
         toggle_details_panel(str(action_element.getAttribute("data-target")))
     elif action == "stage":
         set_stage(str(action_element.getAttribute("data-value")))

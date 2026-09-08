@@ -224,6 +224,11 @@
               <p class="field-help">x₀, y₀ ubican un punto del eje; β mide su orientación antihoraria desde X.</p>
               <div id="analysis-frame-list" class="analysis-frame-list"></div>
             </div>
+
+            <div class="steps-card">
+              <button type="button" class="details-toggle" data-action="toggle-details" data-target=".steps-card" aria-expanded="false" aria-controls="analysis-steps">Desarrollo paso a paso del análisis <span>ver desarrollo</span></button>
+              <div id="analysis-steps" class="steps-scroll"></div>
+            </div>
           </section>
 
           <section class="analysis-result-panel" aria-labelledby="analysis-result-heading">
@@ -281,14 +286,10 @@
 
             <div id="analysis-displacements" class="analysis-table-card"></div>
             <div id="analysis-frames" class="analysis-table-card"></div>
-            <details class="steps-card">
-              <summary data-action="toggle-details" data-target=".steps-card">Desarrollo paso a paso del análisis <span>ver desarrollo</span></summary>
-              <div id="analysis-steps" class="steps-scroll"></div>
-            </details>
-            <details class="matrix-card">
-              <summary data-action="toggle-details" data-target=".matrix-card">Matriz global K<sub>P3D</sub> vector de fuerzas <span>ver detalle</span></summary>
+            <div class="matrix-card">
+              <button type="button" class="details-toggle" data-action="toggle-details" data-target=".matrix-card" aria-expanded="false" aria-controls="analysis-matrix">Matriz global K<sub>P3D</sub> vector de fuerzas <span>ver detalle</span></button>
               <div id="analysis-matrix" class="matrix-scroll"></div>
-            </details>
+            </div>
           </section>
         </div>
 
