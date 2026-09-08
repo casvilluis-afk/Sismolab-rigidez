@@ -370,9 +370,9 @@ select { padding: 8px 10px; }
 .matrix-table th { color: #4d5e64; background: #eef3f2; }
 .matrix-caption { margin: 0 0 10px; color: var(--muted); font-size: 11px; }
 .steps-card { padding: 0; overflow: hidden; }
-.steps-scroll { padding: 20px; display: none; gap: 24px; }
+.steps-scroll { padding: 20px; display: none; gap: 24px; grid-template-columns: minmax(0,1fr); }
 .steps-card.is-open .steps-scroll { display: grid; }
-.step-block { padding-bottom: 20px; border-bottom: 1px dashed var(--border); }
+.step-block { min-width: 0; padding-bottom: 20px; border-bottom: 1px dashed var(--border); }
 .step-block:last-child { border-bottom: 0; padding-bottom: 0; }
 .step-block h4 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 14px; }
 .step-badge { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; background: var(--teal); color: white; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; font-weight: 800; }

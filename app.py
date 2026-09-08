@@ -1020,7 +1020,7 @@ def _labeled_matrix_table(matrix: list[list[float]], row_labels: list[str], col_
     for row_label, row in zip(row_labels, matrix):
         cells = "".join(f"<td>{_compact_number(value)}</td>" for value in row)
         rows.append(f"<tr><th>{escape(row_label)}</th>{cells}</tr>")
-    return f'<table class="matrix-table"><thead><tr><th>{escape(corner)}</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+    return f'<div class="table-scroll"><table class="matrix-table"><thead><tr><th>{escape(corner)}</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
 
 
 def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
@@ -1516,6 +1516,20 @@ def render_deformation_views(result: dict) -> None:
     )
     by_id("analysis-frame-elevation").innerHTML = _frame_elevation_svg(result, analysis_selected_axis_id)
 
+    selected_frame = next(
+        (item for item in result["frames"] if str(item["id"]) == str(analysis_selected_axis_id)), None
+    )
+    if selected_frame is not None:
+        level_labels = [f"Nivel {level + 1}" for level in range(analysis_level_count)]
+        stiffness_unit = "kN/m" if units == "SI" else "tonf/m"
+        k_levels = " · ".join(_compact_number(value) for value in selected_frame["story_stiffnesses"])
+        by_id("analysis-frame-matrix").innerHTML = f"""
+          <p class="matrix-caption">Eje {escape(str(selected_frame['axis']))} · modelo de corte apilado (fila y columna = nivel) · k por nivel: {k_levels} {escape(stiffness_unit)}</p>
+          {_labeled_matrix_table(selected_frame["local_matrix"], level_labels, level_labels, "Nivel")}
+        """
+    else:
+        by_id("analysis-frame-matrix").innerHTML = '<p class="matrix-caption">Selecciona un eje para ver su matriz local.</p>'
+
 
 def render_action_charts(result: dict) -> None:
     """Dibuja fuerzas por piso, cortante de piso y momentos en columna del eje elegido."""
@@ -1556,6 +1570,7 @@ def _clear_analysis_results(message: str) -> None:
     by_id("analysis-axonometric").innerHTML = placeholder
     by_id("analysis-axonometric-caption").textContent = ""
     by_id("analysis-frame-elevation").innerHTML = placeholder
+    by_id("analysis-frame-matrix").innerHTML = placeholder
     by_id("analysis-floor-forces-chart").innerHTML = placeholder
     by_id("analysis-story-shear-chart").innerHTML = placeholder
     by_id("analysis-column-moment-chart").innerHTML = placeholder
