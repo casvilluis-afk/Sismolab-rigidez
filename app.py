@@ -1084,6 +1084,67 @@ def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
     return _labeled_matrix_table(matrix, labels, labels, "GDL")
 
 
+def _equation_matrix(rows: list[list[str]], aria_label: str) -> str:
+    """Matriz compacta con corchetes, pensada para desarrollos de ecuaciones."""
+
+    column_count = max((len(row) for row in rows), default=1)
+    cells = "".join(f"<span>{cell}</span>" for row in rows for cell in row)
+    return (
+        f'<span class="equation-matrix" role="img" aria-label="{escape(aria_label, quote=True)}">'
+        f'<span class="equation-matrix-grid" style="--matrix-columns:{column_count}">{cells}</span></span>'
+    )
+
+
+def _local_matrix_symbolic(axis: str, levels: int) -> list[list[str]]:
+    """Forma simbólica tridiagonal del modelo de corte de un pórtico."""
+
+    axis_html = escape(str(axis))
+
+    def k(level: int) -> str:
+        return f"k<sub>{axis_html},{level}</sub>"
+
+    symbolic = [["0" for _column in range(levels)] for _row in range(levels)]
+    for row in range(levels):
+        symbolic[row][row] = k(row + 1) if row == levels - 1 else f"{k(row + 1)} + {k(row + 2)}"
+        if row < levels - 1:
+            symbolic[row][row + 1] = f"−{k(row + 2)}"
+            symbolic[row + 1][row] = f"−{k(row + 2)}"
+    return symbolic
+
+
+def _local_matrix_development(frame: dict, levels: int, stiffness_unit: str) -> str:
+    """Desarrollo simbólico y numérico de K local para el pórtico seleccionado."""
+
+    axis = str(frame["axis"])
+    axis_html = escape(axis)
+    symbolic = _local_matrix_symbolic(axis, levels)
+    numeric = [[_compact_number(value) for value in row] for row in frame["local_matrix"]]
+    k_values = " · ".join(
+        f"k<sub>{axis_html},{level + 1}</sub> = {_compact_number(value)}"
+        for level, value in enumerate(frame["story_stiffnesses"])
+    )
+    return f"""
+      <div class="local-matrix-development">
+        <div class="local-matrix-title">
+          <div><strong>Pórtico del eje {axis_html} — desarrollo completo</strong><span>Modelo de corte de {levels} nivel{"es" if levels != 1 else ""}</span></div>
+          <span>{escape(stiffness_unit)}</span>
+        </div>
+        <p>Rigideces de entrepiso: {k_values} {escape(stiffness_unit)}.</p>
+        <div class="local-matrix-equation-scroll">
+          <div class="local-matrix-equation">
+            <span class="matrix-name">[K<sub>{axis_html}</sub>]<sub>local</sub></span>
+            <span class="matrix-equals">=</span>
+            {_equation_matrix(symbolic, f'Matriz local simbólica del eje {axis}')}
+            <span class="matrix-equals">=</span>
+            {_equation_matrix(numeric, f'Matriz local numérica del eje {axis}')}
+            <span class="matrix-equation-unit">{escape(stiffness_unit)}</span>
+          </div>
+        </div>
+        <p class="local-matrix-note">Cada fila y columna representa un nivel. Al cambiar de pórtico se actualizan sus rigideces y todos los términos de la matriz.</p>
+      </div>
+    """
+
+
 def _analysis_steps_html(result: dict) -> str:
     """Desarrollo didáctico paso a paso, recalculado con los datos vigentes.
 
@@ -1099,7 +1160,12 @@ def _analysis_steps_html(result: dict) -> str:
     dof_labels: list[str] = []
     for level in range(levels):
         dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
-    stiffness_unit = "kN/m" if units == "SI" else "tonf/m"
+    # El solucionador convierte internamente las rigideces MKS a kN/m.
+    stiffness_unit = "kN/m"
+    selected_frame = next(
+        (frame for frame in frames if str(frame["id"]) == str(analysis_selected_axis_id)),
+        frames[0],
+    )
 
     # Paso 0 — rigidez de columna por eje
     rows0 = []
@@ -1138,18 +1204,12 @@ def _analysis_steps_html(result: dict) -> str:
       </div>
     """
 
-    # Paso 2 — matriz local K_eje de cada eje
-    step2_blocks = []
-    for frame in frames:
-        step2_blocks.append(
-            f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
-            + _labeled_matrix_table(frame["local_matrix"], level_labels, level_labels, "Nivel")
-        )
+    # Paso 2 — matriz local K_eje del pórtico seleccionado
     step2 = f"""
       <div class="step-block">
         <h4><span class="step-badge">2</span>Rigidez lateral de cada eje (K<sub>eje</sub>)</h4>
-        <p>Modelo de corte apilado: fila y columna representan niveles; el eje se comporta como resortes de corte en serie.</p>
-        {"".join(step2_blocks)}
+        <p>Modelo de corte apilado: fila y columna representan niveles; el eje se comporta como resortes de corte en serie. El selector de la tarjeta «Matriz local del pórtico» permite revisar cada eje.</p>
+        {_local_matrix_development(selected_frame, levels, stiffness_unit)}
       </div>
     """
 
@@ -1174,20 +1234,19 @@ def _analysis_steps_html(result: dict) -> str:
     """
 
     # Paso 4 — contribución de cada eje y ensamblaje de K_P3D
-    first_frame = frames[0]
-    intermediate = _matmul(first_frame["local_matrix"], first_frame["transformation"])
-    contribution = _matmul(_transpose(first_frame["transformation"]), intermediate)
+    intermediate = _matmul(selected_frame["local_matrix"], selected_frame["transformation"])
+    contribution = _matmul(_transpose(selected_frame["transformation"]), intermediate)
     other_axes = ", ".join(
         f"eje {escape(str(frame['axis']))} (r={format_number(frame['lever_arm'], 3)} m, k={_compact_number(frame['story_stiffnesses'][0])} {stiffness_unit})"
-        for frame in frames[1:]
+        for frame in frames if str(frame["id"]) != str(selected_frame["id"])
     )
     step4 = f"""
       <div class="step-block">
         <h4><span class="step-badge">4</span>Contribución de cada eje a la matriz global</h4>
-        <p>Cada eje aporta con la transformación de congruencia <code>[K_eje]<sub>global</sub> = [G]<sup>T</sup>[K_eje][G]</code>. Se muestra el desarrollo completo del primer eje; los demás siguen el mismo procedimiento.</p>
-        <p class="step-axis-title">Eje {escape(str(first_frame["axis"]))} — producto [K_local]·[G]</p>
+        <p>Cada eje aporta con la transformación de congruencia <code>[K_eje]<sub>global</sub> = [G]<sup>T</sup>[K_eje][G]</code>. Se muestra el desarrollo completo del pórtico seleccionado.</p>
+        <p class="step-axis-title">Eje {escape(str(selected_frame["axis"]))} — producto [K_local]·[G]</p>
         {_labeled_matrix_table(intermediate, level_labels, dof_labels, "Nivel")}
-        <p class="step-axis-title">Eje {escape(str(first_frame["axis"]))} — [G]<sup>T</sup>·(anterior) = aporte a K global</p>
+        <p class="step-axis-title">Eje {escape(str(selected_frame["axis"]))} — [G]<sup>T</sup>·(anterior) = aporte a K global</p>
         {_labeled_matrix_table(contribution, dof_labels, dof_labels, "GDL")}
         {f'<p class="step-note">Los demás ejes se procesan igual: {other_axes}.</p>' if other_axes else ""}
         <p class="step-axis-title">Matriz global ensamblada K<sub>P3D</sub> = Σ [G]<sup>T</sup>[K_eje][G]</p>
@@ -1565,25 +1624,23 @@ def render_deformation_views(result: dict) -> None:
         f"Amplificación visual ×{format_number(axo_scale, 0)} · alturas de piso a escala real"
     )
 
-    axis_select = by_id("analysis-elevation-axis")
-    axis_select.innerHTML = "".join(
+    axis_options = "".join(
         f'<option value="{group.id}"{" selected" if group.id == analysis_selected_axis_id else ""}>'
         f"Eje {escape(str(group.axis))} · {escape(direction_label(group.direction))}</option>"
         for group in groups
     )
+    by_id("analysis-elevation-axis").innerHTML = axis_options
+    by_id("analysis-matrix-axis").innerHTML = axis_options
     by_id("analysis-frame-elevation").innerHTML = _frame_elevation_svg(result, analysis_selected_axis_id)
 
     selected_frame = next(
         (item for item in result["frames"] if str(item["id"]) == str(analysis_selected_axis_id)), None
     )
     if selected_frame is not None:
-        level_labels = [f"Nivel {level + 1}" for level in range(analysis_level_count)]
-        stiffness_unit = "kN/m" if units == "SI" else "tonf/m"
-        k_levels = " · ".join(_compact_number(value) for value in selected_frame["story_stiffnesses"])
-        by_id("analysis-frame-matrix").innerHTML = f"""
-          <p class="matrix-caption">Eje {escape(str(selected_frame['axis']))} · modelo de corte apilado (fila y columna = nivel) · k por nivel: {k_levels} {escape(stiffness_unit)}</p>
-          {_labeled_matrix_table(selected_frame["local_matrix"], level_labels, level_labels, "Nivel")}
-        """
+        stiffness_unit = "kN/m"
+        by_id("analysis-frame-matrix").innerHTML = _local_matrix_development(
+            selected_frame, analysis_level_count, stiffness_unit
+        )
     else:
         by_id("analysis-frame-matrix").innerHTML = '<p class="matrix-caption">Selecciona un eje para ver su matriz local.</p>'
 
@@ -2374,7 +2431,7 @@ def handle_change(event):
         analysis_view_level = int(parse_number(target.value, 1.0))
         render_analysis_results()
         return
-    if field == "analysis-elevation-axis":
+    if field in ("analysis-elevation-axis", "analysis-matrix-axis"):
         global analysis_selected_axis_id
         analysis_selected_axis_id = str(target.value)
         render_analysis_results()
