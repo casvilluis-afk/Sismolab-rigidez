@@ -1549,7 +1549,6 @@ def _clear_analysis_results(message: str) -> None:
     )
     by_id("analysis-displacements").innerHTML = ""
     by_id("analysis-frames").innerHTML = ""
-    _update_details_panel("analysis-matrix", ".matrix-card", '<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>')
     _update_details_panel("analysis-steps", ".steps-card", '<p class="matrix-caption">El desarrollo paso a paso aparecerá cuando el sistema tenga estabilidad global.</p>')
     placeholder = '<p class="matrix-caption">Disponible cuando el modelo tenga estabilidad global.</p>'
     by_id("analysis-deformed-plan").innerHTML = placeholder
@@ -1628,22 +1627,6 @@ def render_analysis_results() -> None:
       <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>r (m)</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{''.join(frame_rows)}</tbody></table></div>
     """
 
-    dof_labels = []
-    force_labels = []
-    for level in range(analysis_level_count):
-        dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
-        force_labels.extend((f"Fx{level + 1}", f"Fy{level + 1}", f"Mz{level + 1}"))
-    force_items = " · ".join(
-        f"{label}={_compact_number(value)}"
-        for label, value in zip(force_labels, result["force_vector"])
-    )
-    _update_details_panel(
-        "analysis-matrix",
-        ".matrix-card",
-        '<p class="matrix-caption">K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G. Orden de grados de libertad: {u<sub>x</sub>, u<sub>y</sub>, θ} por nivel.</p>'
-        + _matrix_table(result["global_matrix"], dof_labels)
-        + f'<p class="matrix-caption"><strong>Vector F</strong> (kN y kN·m, mismo orden de niveles): {force_items}</p>'
-    )
     _update_details_panel("analysis-steps", ".steps-card", _analysis_steps_html(result))
 
     render_deformation_views(result)
