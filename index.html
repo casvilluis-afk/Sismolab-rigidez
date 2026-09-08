@@ -19,7 +19,7 @@
             <span><strong>SismoLab</strong><small>Herramientas estructurales</small></span>
           </a>
           <div class="header-actions">
-            <span class="python-status" id="python-status"><i></i> Iniciando Python…</span>
+            <span class="python-status" id="python-status" hidden><i></i> Iniciando Python…</span>
             <button class="button button-ghost" type="button" data-action="reset">↻ Reiniciar</button>
           </div>
         </div>
@@ -44,8 +44,12 @@
           <span>1</span><div><strong>Rigidez</strong><small>Propiedades de los ejes</small></div>
         </button>
         <span class="stage-connector" aria-hidden="true">→</span>
+        <button id="stage-loads-button" class="stage-tab" type="button" data-action="stage" data-value="loads">
+          <span>2</span><div><strong>Metrado</strong><small>Cargas y peso sísmico</small></div>
+        </button>
+        <span class="stage-connector" aria-hidden="true">→</span>
         <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
-          <span>2</span><div><strong>Análisis</strong><small>Respuesta del edificio</small></div>
+          <span>3</span><div><strong>Análisis</strong><small>Respuesta del edificio</small></div>
         </button>
       </nav>
 
@@ -162,23 +166,151 @@
           <li><span>2</span><div><strong>Ubicación del eje</strong><small>x, y y orientación β</small></div></li>
           <li><span>3</span><div><strong>Respuesta global</strong><small>desplazamiento, giro y cortante</small></div></li>
         </ol>
-        <button class="button transition-button" type="button" data-action="stage" data-value="analysis">Continuar al análisis <span aria-hidden="true">→</span></button>
+        <button class="button transition-button" type="button" data-action="stage" data-value="loads">Continuar al metrado de cargas <span aria-hidden="true">→</span></button>
       </section>
       </div>
 
-      <section id="analysis-stage" class="page-shell analysis-stage" hidden aria-labelledby="analysis-heading">
+      <section id="loads-stage" class="page-shell analysis-stage" hidden aria-labelledby="loads-heading">
         <div class="analysis-stage__head">
           <button class="button button-ghost" type="button" data-action="stage" data-value="rigidity">← Volver a Rigidez</button>
           <div>
-            <p class="eyebrow">ETAPA 2 · ANÁLISIS PSEUDOTRIDIMENSIONAL</p>
+            <p class="eyebrow">ETAPA 2 · METRADO DE CARGAS</p>
+            <h2 id="loads-heading">Peso sísmico y fuerza estática por nivel</h2>
+            <p>Define las cargas gravitacionales (E.020) de cada nivel y los parámetros de sitio para que Python calcule el peso sísmico y la fuerza estática de cada piso (E.030).</p>
+          </div>
+        </div>
+
+        <div class="analysis-bridge" role="note">
+          <span aria-hidden="true">1 → 2</span>
+          <div><strong>¿Qué cambió?</strong><p>En Rigidez definiste cuánto se opone cada eje al movimiento. Aquí defines cuánto pesa cada nivel y qué fuerza sísmica le corresponde; esas fuerzas alimentarán la Etapa 3.</p></div>
+        </div>
+
+        <div class="analysis-workspace">
+          <section class="analysis-input-panel" aria-labelledby="loads-data-heading">
+            <div class="section-heading">
+              <span class="step-number">02</span>
+              <div><h2 id="loads-data-heading">Parámetros de sitio (E.030)</h2><p>Zona sísmica, suelo, categoría y sistema estructural.</p></div>
+            </div>
+
+            <div class="analysis-form-grid analysis-form-grid--four">
+              <div class="field-block">
+                <label for="loads-zone">Zona sísmica</label>
+                <select id="loads-zone" data-field="loads-zone">
+                  <option value="1">Zona 1 (Z=0,10)</option>
+                  <option value="2">Zona 2 (Z=0,25)</option>
+                  <option value="3" selected>Zona 3 (Z=0,35)</option>
+                  <option value="4">Zona 4 (Z=0,45)</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label for="loads-soil">Perfil de suelo</label>
+                <select id="loads-soil" data-field="loads-soil">
+                  <option value="S0">S0 · Roca dura</option>
+                  <option value="S1">S1 · Roca / muy rígido</option>
+                  <option value="S2" selected>S2 · Intermedio</option>
+                  <option value="S3">S3 · Blando</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label for="loads-category">Categoría</label>
+                <select id="loads-category" data-field="loads-category">
+                  <option value="A">A · Esencial (U=1,5)</option>
+                  <option value="B">B · Importante (U=1,3)</option>
+                  <option value="C" selected>C · Común (U=1,0)</option>
+                  <option value="D">D · Menor (U=1,0)</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label for="loads-system">Sistema estructural</label>
+                <select id="loads-system" data-field="loads-system">
+                  <option value="porticos">Pórticos (R₀=8)</option>
+                  <option value="dual">Dual (R₀=7)</option>
+                  <option value="muros" selected>Muros estructurales (R₀=6)</option>
+                  <option value="albanileria">Albañilería (R₀=3)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="analysis-form-grid analysis-form-grid--four">
+              <div class="field-block">
+                <label for="loads-ia">Irregularidad en altura I<sub>a</sub></label>
+                <input id="loads-ia" type="number" step="0.05" min="0.5" max="1" value="1" data-field="loads-ia" />
+              </div>
+              <div class="field-block">
+                <label for="loads-ip">Irregularidad en planta I<sub>p</sub></label>
+                <input id="loads-ip" type="number" step="0.05" min="0.5" max="1" value="1" data-field="loads-ip" />
+              </div>
+              <div class="field-block">
+                <label for="loads-period-mode">Periodo fundamental T</label>
+                <select id="loads-period-mode" data-field="loads-period-mode">
+                  <option value="auto" selected>Estimar T = hn/CT</option>
+                  <option value="manual">Ingresar T manualmente</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label for="loads-period-manual">T manual</label>
+                <div class="input-with-unit"><input id="loads-period-manual" type="number" step="0.01" min="0.05" value="0.30" data-field="loads-period-manual" disabled /><span>s</span></div>
+              </div>
+            </div>
+
+            <div class="analysis-subsection">
+              <div class="subheading"><h3>Niveles y cargas por nivel</h3><span>CM y CV en kN/m² · alturas en m</span></div>
+              <div id="loads-level-list" class="analysis-floor-list"></div>
+              <button id="add-load-level" type="button" class="button add-group" data-action="add-load-level">＋ Añadir nivel <span id="load-level-count">1/12</span></button>
+            </div>
+          </section>
+
+          <section class="analysis-result-panel" aria-labelledby="loads-result-heading">
+            <div class="analysis-result-card">
+              <div class="result-card__top">
+                <div><span class="result-kicker">METRADO EN VIVO</span><h2 id="loads-result-heading">Peso sísmico y cortante basal</h2></div>
+                <span class="live-pill">Cálculo en vivo</span>
+              </div>
+              <div id="loads-warning" class="analysis-warning" hidden></div>
+              <div id="loads-summary" class="analysis-summary"></div>
+              <div class="formula-bar"><b>Σ</b><span>P = CM + %CV · CV por nivel · V = (Z·U·C·S/R)·ΣP</span></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Peso sísmico por nivel</h3><span>P<sub>i</sub> en kN</span></div>
+              <div id="loads-weight-chart" class="analysis-chart"></div>
+            </div>
+
+            <div class="analysis-plan-card">
+              <div class="subheading"><h3>Fuerza sísmica por nivel</h3><span>F<sub>i</sub> en kN</span></div>
+              <div id="loads-force-chart" class="analysis-chart"></div>
+            </div>
+
+            <div id="loads-table" class="analysis-table-card"></div>
+
+            <div id="loads-steps-card" class="steps-card">
+              <button type="button" class="details-toggle" data-action="toggle-details" data-target="#loads-steps-card" aria-expanded="false" aria-controls="loads-steps">Desarrollo paso a paso del metrado <span>ver desarrollo</span></button>
+              <div id="loads-steps" class="steps-scroll"></div>
+            </div>
+
+            <button id="apply-loads-to-analysis" type="button" class="button transition-button" data-action="apply-loads">Usar estas fuerzas en el Análisis <span aria-hidden="true">→</span></button>
+          </section>
+        </div>
+
+        <div class="analysis-scope">
+          <strong>Alcance de esta etapa</strong>
+          <p>Metrado simplificado con áreas tributarias por nivel y método estático equivalente de la E.030. No reemplaza un metrado detallado elemento por elemento ni el análisis dinámico modal espectral cuando la norma lo exige.</p>
+        </div>
+      </section>
+
+      <section id="analysis-stage" class="page-shell analysis-stage" hidden aria-labelledby="analysis-heading">
+        <div class="analysis-stage__head">
+          <button class="button button-ghost" type="button" data-action="stage" data-value="loads">← Volver a Metrado</button>
+          <div>
+            <p class="eyebrow">ETAPA 3 · ANÁLISIS PSEUDOTRIDIMENSIONAL</p>
             <h2 id="analysis-heading">Respuesta del edificio con diafragmas rígidos</h2>
             <p>Cada nivel tiene tres movimientos: desplazamiento en X, desplazamiento en Y y giro alrededor del eje vertical.</p>
           </div>
         </div>
 
         <div class="analysis-bridge" role="note">
-          <span aria-hidden="true">1 → 2</span>
-          <div><strong>¿Qué cambió?</strong><p>En Rigidez estudiaste cuánto se opone cada eje al movimiento. Aquí ubicas esos ejes en el plano y Python calcula cómo se mueve el edificio completo bajo las fuerzas sísmicas.</p></div>
+          <span aria-hidden="true">2 → 3</span>
+          <div><strong>¿Qué cambió?</strong><p>En Metrado obtuviste la fuerza sísmica de cada nivel. Aquí ubicas los ejes resistentes en el plano y Python calcula cómo se mueve el edificio completo bajo esas fuerzas.</p></div>
         </div>
 
         <div class="analysis-workspace">
@@ -225,8 +357,8 @@
               <div id="analysis-frame-list" class="analysis-frame-list"></div>
             </div>
 
-            <div class="steps-card">
-              <button type="button" class="details-toggle" data-action="toggle-details" data-target=".steps-card" aria-expanded="false" aria-controls="analysis-steps">Desarrollo paso a paso del análisis <span>ver desarrollo</span></button>
+            <div id="analysis-steps-card" class="steps-card">
+              <button type="button" class="details-toggle" data-action="toggle-details" data-target="#analysis-steps-card" aria-expanded="false" aria-controls="analysis-steps">Desarrollo paso a paso del análisis <span>ver desarrollo</span></button>
               <div id="analysis-steps" class="steps-scroll"></div>
             </div>
           </section>

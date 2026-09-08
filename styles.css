@@ -51,7 +51,7 @@ button { cursor: pointer; }
 .model-note p { margin: 0; line-height: 1.5; }
 .model-note strong { display: block; margin-bottom: 4px; color: white; }
 
-.stage-switcher { display: grid; grid-template-columns: minmax(0,1fr) 44px minmax(0,1fr); align-items: center; gap: 10px; margin-top: 24px; padding: 8px; background: white; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 8px 22px rgba(18,44,51,.06); }
+.stage-switcher { display: grid; grid-template-columns: minmax(0,1fr) 44px minmax(0,1fr) 44px minmax(0,1fr); align-items: center; gap: 10px; margin-top: 24px; padding: 8px; background: white; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 8px 22px rgba(18,44,51,.06); }
 .stage-tab { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 11px 14px; color: #526168; background: transparent; border: 1px solid transparent; border-radius: 10px; text-align: left; }
 .stage-tab > span { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; color: #667278; background: #edf1f0; border-radius: 50%; font-family: var(--mono); font-size: 12px; font-weight: 800; }
 .stage-tab div { min-width: 0; display: grid; }
@@ -416,7 +416,7 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .intro-grid { min-height: 0; padding-block: 34px; }
   .intro h1 { font-size: 38px; }
   .intro-copy { font-size: 16px; }
-  .stage-switcher { grid-template-columns: minmax(0,1fr) 24px minmax(0,1fr); gap: 3px; }
+  .stage-switcher { grid-template-columns: minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr); gap: 3px; }
   .stage-tab { gap: 7px; padding: 8px; }
   .stage-tab > span { width: 28px; height: 28px; }
   .stage-tab small { display: none; }

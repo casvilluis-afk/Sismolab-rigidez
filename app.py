@@ -24,6 +24,14 @@ from stiffness import (
     _matmul,
     _transpose,
 )
+from loads import (
+    CATEGORY_CV_FACTOR,
+    LIVE_LOAD_PRESETS,
+    LevelLoad,
+    SeismicSiteParams,
+    live_load_preset,
+    static_seismic_forces,
+)
 
 
 units = "SI"
@@ -58,6 +66,20 @@ groups = [
     )
 ]
 
+next_load_level_number = 3
+load_levels = [
+    LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False),
+    LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True),
+]
+loads_zone = "3"
+loads_soil = "S2"
+loads_category = "C"
+loads_system = "muros"
+loads_ia = 1.0
+loads_ip = 1.0
+loads_period_mode = "auto"
+loads_period_manual = 0.30
+
 
 def by_id(element_id: str):
     return document.getElementById(element_id)
@@ -89,6 +111,10 @@ def parse_number(value, fallback: float = 0.0) -> float:
 
 def get_group(group_id: str) -> ColumnGroup | None:
     return next((group for group in groups if group.id == group_id), None)
+
+
+def get_load_level(level_id: str) -> LevelLoad | None:
+    return next((level for level in load_levels if level.id == level_id), None)
 
 
 def shape_name(shape: str) -> str:
@@ -1648,38 +1674,289 @@ def render_analysis_results() -> None:
     render_action_charts(result)
 
 
+def load_level_card(level: LevelLoad, index: int) -> str:
+    can_remove = len(load_levels) > 1
+    remove_button = (
+        f'<button type="button" class="button remove-button" data-action="remove-load-level" '
+        f'data-id="{level.id}" aria-label="Eliminar nivel {index + 1}">×</button>'
+        if can_remove
+        else ""
+    )
+    floor_selected = "" if level.is_roof else " is-selected"
+    roof_selected = " is-selected" if level.is_roof else ""
+    preset_options = "".join(
+        f'<option value="{key}">{escape(label)}</option>' for key, (label, _value) in LIVE_LOAD_PRESETS.items()
+    )
+    label_value = escape(str(level.label), quote=True)
+    return f"""
+    <article class="column-card" data-card-id="{level.id}">
+      <div class="column-card__head">
+        <div><span class="column-code">N{index + 1}</span><div><h3>Nivel {index + 1}</h3><p>{"Techo / azotea" if level.is_roof else "Piso"}</p></div></div>
+        {remove_button}
+      </div>
+      <div class="form-grid form-grid--compact">
+        <div class="field-block">
+          <label for="load-label-{level.id}">Etiqueta</label>
+          <input id="load-label-{level.id}" type="text" maxlength="24" value="{label_value}" data-level-id="{level.id}" data-field="load-label" />
+        </div>
+        <fieldset class="field-block shape-field">
+          <legend>Tipo</legend>
+          <div class="shape-options">
+            <button type="button" class="shape-option{floor_selected}" data-action="load-roof" data-id="{level.id}" data-value="false">Piso</button>
+            <button type="button" class="shape-option{roof_selected}" data-action="load-roof" data-id="{level.id}" data-value="true">Techo</button>
+          </div>
+        </fieldset>
+      </div>
+      <div class="form-grid">
+        <div class="field-block">
+          <label for="load-area-{level.id}">Área tributaria</label>
+          <div class="input-with-unit"><input id="load-area-{level.id}" type="number" min="1" step="1" value="{input_number(level.area)}" data-level-id="{level.id}" data-field="load-area" /><span>m²</span></div>
+        </div>
+        <div class="field-block">
+          <label for="load-height-{level.id}">Altura de piso</label>
+          <div class="input-with-unit"><input id="load-height-{level.id}" type="number" min="1" max="12" step="0.05" value="{input_number(level.height)}" data-level-id="{level.id}" data-field="load-height" /><span>m</span></div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field-block">
+          <label for="load-cm-{level.id}">Carga muerta CM</label>
+          <div class="input-with-unit"><input id="load-cm-{level.id}" type="number" min="0" step="0.1" value="{input_number(level.cm)}" data-level-id="{level.id}" data-field="load-cm" /><span>kN/m²</span></div>
+          <small>Peso propio de losa + acabados + tabiquería.</small>
+        </div>
+        <div class="field-block">
+          <label for="load-cv-{level.id}">Sobrecarga CV</label>
+          <div class="input-with-unit"><input id="load-cv-{level.id}" type="number" min="0" step="0.1" value="{input_number(level.cv)}" data-level-id="{level.id}" data-field="load-cv" /><span>kN/m²</span></div>
+        </div>
+      </div>
+      <div class="field-block">
+        <label for="load-preset-{level.id}">Sobrecarga típica (E.020)</label>
+        <select id="load-preset-{level.id}" data-level-id="{level.id}" data-field="load-preset">
+          <option value="">— elegir uso —</option>
+          {preset_options}
+        </select>
+        <small>Al elegir un uso se llena el campo CV; puedes seguir editándolo a mano.</small>
+      </div>
+    </article>
+    """
+
+
+def render_load_levels() -> None:
+    by_id("loads-level-list").innerHTML = "".join(
+        load_level_card(level, index) for index, level in enumerate(load_levels)
+    )
+    by_id("load-level-count").textContent = f"{len(load_levels)}/12"
+    by_id("add-load-level").disabled = len(load_levels) >= 12
+
+
+def render_loads_site_inputs() -> None:
+    by_id("loads-zone").value = loads_zone
+    by_id("loads-soil").value = loads_soil
+    by_id("loads-category").value = loads_category
+    by_id("loads-system").value = loads_system
+    by_id("loads-ia").value = input_number(loads_ia)
+    by_id("loads-ip").value = input_number(loads_ip)
+    by_id("loads-period-mode").value = loads_period_mode
+    period_input = by_id("loads-period-manual")
+    period_input.value = input_number(loads_period_manual)
+    period_input.disabled = loads_period_mode != "manual"
+
+
+def _build_site_params() -> SeismicSiteParams:
+    manual_period = loads_period_manual if loads_period_mode == "manual" else None
+    return SeismicSiteParams(
+        zone=loads_zone,
+        soil=loads_soil,
+        category=loads_category,
+        system=loads_system,
+        irregularity_height=max(loads_ia, 0.1),
+        irregularity_plan=max(loads_ip, 0.1),
+        period_override=manual_period,
+    )
+
+
+def _loads_steps_html(result, site: SeismicSiteParams) -> str:
+    roof_note = " · con fuerza adicional en la azotea (T &gt; 0,7 s)" if result.period > 0.7 else ""
+    cv_pct = CATEGORY_CV_FACTOR.get(site.category, 0.5) * 100.0
+    return f"""
+      <div class="step-block">
+        <h4><span class="step-badge">1</span>Parámetros de sitio (E.030)</h4>
+        <p>Z = {format_number(result.z, 2)} · U = {format_number(result.u, 2)} · S = {format_number(result.s, 2)} · R = {format_number(result.r, 2)} (R₀ · I<sub>a</sub> · I<sub>p</sub>)</p>
+        <p>T<sub>P</sub> = {format_number(result.tp, 2)} s · T<sub>L</sub> = {format_number(result.tl, 2)} s · T = {format_number(result.period, 3)} s → C = {format_number(result.c, 3)}</p>
+      </div>
+      <div class="step-block">
+        <h4><span class="step-badge">2</span>Peso sísmico por nivel</h4>
+        <p><code>P = CM·A + %CV·CV·A</code>, con %CV = 25% en techos y {format_number(cv_pct, 0)}% en el resto de niveles (categoría {escape(site.category)}).</p>
+      </div>
+      <div class="step-block">
+        <h4><span class="step-badge">3</span>Cortante en la base</h4>
+        <p><code>V = (Z·U·C·S / R) · ΣP</code> = {format_number(result.base_shear_coefficient, 4)} × {format_number(result.weight_total, 1)} kN = <strong>{format_number(result.base_shear, 1)} kN</strong></p>
+      </div>
+      <div class="step-block">
+        <h4><span class="step-badge">4</span>Distribución en altura</h4>
+        <p><code>F_i = V · (P_i · h_i^k) / Σ(P_j · h_j^k)</code>, k = {format_number(result.height_k, 2)}{roof_note}</p>
+      </div>
+    """
+
+
+def render_loads_results() -> None:
+    warning = by_id("loads-warning")
+    site = _build_site_params()
+    try:
+        if not load_levels:
+            raise ValueError("Agrega al menos un nivel para calcular el metrado.")
+        result = static_seismic_forces(load_levels, site)
+    except (ValueError, ZeroDivisionError) as error:
+        warning.hidden = False
+        warning.textContent = str(error)
+        by_id("loads-summary").innerHTML = (
+            '<div class="analysis-placeholder">Completa los datos del metrado para calcular el peso sísmico.</div>'
+        )
+        by_id("loads-weight-chart").innerHTML = ""
+        by_id("loads-force-chart").innerHTML = ""
+        by_id("loads-table").innerHTML = ""
+        _update_details_panel("loads-steps", ".steps-card", "")
+        return
+
+    warning.hidden = True
+    warning.textContent = ""
+
+    period_source = "estimado T = hn/CT" if loads_period_mode == "auto" else "manual"
+    by_id("loads-summary").innerHTML = f"""
+      <div class="analysis-metric"><span>Peso sísmico total ΣP</span><strong>{format_number(result.weight_total, 1)}</strong><small>kN</small></div>
+      <div class="analysis-metric"><span>Cortante basal V</span><strong>{format_number(result.base_shear, 1)}</strong><small>kN</small></div>
+      <div class="analysis-metric"><span>Periodo T</span><strong>{format_number(result.period, 3)}</strong><small>s · {period_source}</small></div>
+      <div class="analysis-metric"><span>Coef. Z·U·C·S/R</span><strong>{format_number(result.base_shear_coefficient, 4)}</strong><small>C = {format_number(result.c, 3)} · k = {format_number(result.height_k, 2)}</small></div>
+    """
+
+    order = list(reversed(range(len(load_levels))))
+    weight_rows = [(f"Nivel {index + 1}", result.level_weights[index]) for index in order]
+    by_id("loads-weight-chart").innerHTML = _bar_chart_svg(weight_rows, "kN", "chart-bar-amber")
+
+    force_rows = [(f"Nivel {index + 1}", result.level_forces[index]) for index in order]
+    by_id("loads-force-chart").innerHTML = _bar_chart_svg(force_rows, "kN", "chart-bar-teal")
+
+    table_rows = []
+    cumulative_shear = 0.0
+    for index in order:
+        level = load_levels[index]
+        cumulative_shear += result.level_forces[index]
+        table_rows.append(
+            f"<tr><td>{escape(str(level.label))}</td><td>{format_number(level.area, 1)}</td>"
+            f"<td>{format_number(result.level_weights[index], 1)}</td><td>{format_number(result.level_forces[index], 1)}</td>"
+            f"<td>{format_number(cumulative_shear, 1)}</td></tr>"
+        )
+    by_id("loads-table").innerHTML = f"""
+      <h3>Metrado por nivel</h3>
+      <p>El cortante acumulado se calcula de techo a base, igual que la fuerza sísmica que usará la Etapa 3.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>Área (m²)</th><th>P (kN)</th><th>F (kN)</th><th>V acumulado (kN)</th></tr></thead><tbody>{"".join(table_rows)}</tbody></table></div>
+    """
+
+    _update_details_panel("loads-steps", ".steps-card", _loads_steps_html(result, site))
+
+
+def add_load_level() -> None:
+    global next_load_level_number
+    if len(load_levels) >= 12:
+        return
+    is_roof = True
+    for level in load_levels:
+        if not level.is_roof:
+            is_roof = False
+            break
+    load_levels.append(
+        LevelLoad(
+            id=f"lv{next_load_level_number}",
+            label=f"Nivel {len(load_levels) + 1}",
+            area=200.0,
+            cm=6.5,
+            cv=2.0,
+            height=3.0,
+            is_roof=False,
+        )
+    )
+    next_load_level_number += 1
+    render_load_levels()
+    render_loads_results()
+
+
+def apply_loads_to_analysis() -> None:
+    """Copia el peso sísmico calculado hacia la Etapa 3 (Análisis)."""
+    global analysis_level_count, analysis_heights, analysis_forces
+    site = _build_site_params()
+    try:
+        result = static_seismic_forces(load_levels, site)
+    except (ValueError, ZeroDivisionError):
+        return
+    count = min(len(load_levels), 8)
+    analysis_level_count = count
+    analysis_heights = [level.height for level in load_levels[:count]]
+    analysis_forces = [result.level_forces[index] for index in range(count)]
+    render_analysis_inputs()
+    render_analysis_results()
+    set_stage("analysis")
+
+
+STAGE_INTRO = {
+    "rigidity": {
+        "title": "SismoLab · Rigidez lateral",
+        "eyebrow": "RIGIDEZ LATERAL · MODELO DE CORTE",
+        "heading": "Rigidez lateral del entrepiso",
+        "copy": "Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.",
+        "note_title": "Hipótesis principal",
+        "note_copy": "Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.",
+    },
+    "loads": {
+        "title": "SismoLab · Metrado de cargas",
+        "eyebrow": "METRADO DE CARGAS · E.020 / E.030",
+        "heading": "Peso sísmico y fuerza estática por nivel",
+        "copy": "Define las cargas gravitacionales de cada nivel y los parámetros de sitio para obtener el peso sísmico y la fuerza estática que alimentarán el análisis.",
+        "note_title": "Método actual",
+        "note_copy": "Metrado por áreas tributarias y método estático equivalente (E.030), con %CV según categoría de edificación.",
+    },
+    "analysis": {
+        "title": "SismoLab · Análisis estructural",
+        "eyebrow": "ANÁLISIS ESTRUCTURAL · DIAFRAGMA RÍGIDO",
+        "heading": "Análisis pseudotridimensional del edificio",
+        "copy": "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros y cortantes.",
+        "note_title": "Modelo actual",
+        "note_copy": "Tres grados de libertad por nivel y comportamiento elástico lineal.",
+    },
+}
+
+
 def set_stage(stage: str) -> None:
     global current_stage
-    if stage not in ("rigidity", "analysis"):
+    if stage not in ("rigidity", "loads", "analysis"):
         return
     current_stage = stage
-    is_analysis = stage == "analysis"
-    by_id("rigidity-stage").hidden = is_analysis
-    by_id("analysis-stage").hidden = not is_analysis
-    rigidity_button = by_id("stage-rigidity-button")
-    analysis_button = by_id("stage-analysis-button")
-    rigidity_button.classList.toggle("is-active", not is_analysis)
-    analysis_button.classList.toggle("is-active", is_analysis)
-    if is_analysis:
-        document.title = "SismoLab · Análisis estructural"
-        by_id("intro-eyebrow").textContent = "ANÁLISIS ESTRUCTURAL · DIAFRAGMA RÍGIDO"
-        by_id("intro-title").textContent = "Análisis pseudotridimensional del edificio"
-        by_id("intro-copy").textContent = "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros y cortantes."
-        by_id("model-note-title").textContent = "Modelo actual"
-        by_id("model-note-copy").textContent = "Tres grados de libertad por nivel y comportamiento elástico lineal."
-        rigidity_button.removeAttribute("aria-current")
-        analysis_button.setAttribute("aria-current", "step")
+
+    stage_ids = {"rigidity": "rigidity-stage", "loads": "loads-stage", "analysis": "analysis-stage"}
+    buttons = {name: by_id(f"stage-{name}-button") for name in stage_ids}
+    for name, element_id in stage_ids.items():
+        by_id(element_id).hidden = name != stage
+    for name, button in buttons.items():
+        active = name == stage
+        button.classList.toggle("is-active", active)
+        if active:
+            button.setAttribute("aria-current", "step")
+        else:
+            button.removeAttribute("aria-current")
+
+    info = STAGE_INTRO[stage]
+    document.title = info["title"]
+    by_id("intro-eyebrow").textContent = info["eyebrow"]
+    by_id("intro-title").textContent = info["heading"]
+    by_id("intro-copy").textContent = info["copy"]
+    by_id("model-note-title").textContent = info["note_title"]
+    by_id("model-note-copy").textContent = info["note_copy"]
+
+    if stage == "loads":
+        render_loads_site_inputs()
+        render_load_levels()
+        render_loads_results()
+    elif stage == "analysis":
         render_analysis_inputs()
         render_analysis_results()
-    else:
-        document.title = "SismoLab · Rigidez lateral"
-        by_id("intro-eyebrow").textContent = "RIGIDEZ LATERAL · MODELO DE CORTE"
-        by_id("intro-title").textContent = "Rigidez lateral del entrepiso"
-        by_id("intro-copy").textContent = "Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano."
-        by_id("model-note-title").textContent = "Hipótesis principal"
-        by_id("model-note-copy").textContent = "Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas."
-        analysis_button.removeAttribute("aria-current")
-        rigidity_button.setAttribute("aria-current", "step")
 
 
 def resize_analysis_levels(levels: int) -> None:
@@ -1785,6 +2062,9 @@ def reset() -> None:
     global units, story_height, groups, next_group_number, analysis_level_count
     global analysis_heights, analysis_forces, analysis_alpha
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
+    global load_levels, next_load_level_number
+    global loads_zone, loads_soil, loads_category, loads_system
+    global loads_ia, loads_ip, loads_period_mode, loads_period_manual
     units = "SI"
     story_height = 3.0
     next_group_number = 2
@@ -1795,10 +2075,21 @@ def reset() -> None:
     analysis_cm_x, analysis_cm_y = 2.5, 2.0
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
+    load_levels = [
+        LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False),
+        LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True),
+    ]
+    next_load_level_number = 3
+    loads_zone, loads_soil, loads_category, loads_system = "3", "S2", "C", "muros"
+    loads_ia, loads_ip = 1.0, 1.0
+    loads_period_mode, loads_period_manual = "auto", 0.30
     by_id("story-height").value = "3"
     render_unit_toggle()
     render_groups()
     render_results()
+    render_load_levels()
+    render_loads_site_inputs()
+    render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
     set_stage("rigidity")
@@ -1855,6 +2146,23 @@ def handle_click(event):
             render_groups()
             render_results()
             render_analysis_results()
+    elif action == "add-load-level":
+        add_load_level()
+    elif action == "remove-load-level":
+        level_id = str(action_element.getAttribute("data-id"))
+        if len(load_levels) > 1:
+            load_levels[:] = [level for level in load_levels if level.id != level_id]
+            render_load_levels()
+            render_loads_results()
+    elif action == "load-roof":
+        level_id = str(action_element.getAttribute("data-id"))
+        level = get_load_level(level_id)
+        if level is not None:
+            level.is_roof = str(action_element.getAttribute("data-value")) == "true"
+            render_load_levels()
+            render_loads_results()
+    elif action == "apply-loads":
+        apply_loads_to_analysis()
 
 
 @when("input", "#calculator")
@@ -1900,6 +2208,32 @@ def handle_input(event):
         analysis_ecc_y = parse_number(target.value)
         render_analysis_results()
         return
+    if field == "loads-ia":
+        global loads_ia
+        loads_ia = parse_number(target.value, 1.0)
+        render_loads_results()
+        return
+    if field == "loads-ip":
+        global loads_ip
+        loads_ip = parse_number(target.value, 1.0)
+        render_loads_results()
+        return
+    if field == "loads-period-manual":
+        global loads_period_manual
+        loads_period_manual = parse_number(target.value, 0.3)
+        render_loads_results()
+        return
+    if field in ("load-area", "load-cm", "load-cv", "load-height", "load-label"):
+        level = get_load_level(str(target.getAttribute("data-level-id")))
+        if level is None:
+            return
+        if field == "load-label":
+            level.label = str(target.value)[:24]
+        else:
+            attribute = {"load-area": "area", "load-cm": "cm", "load-cv": "cv", "load-height": "height"}[field]
+            setattr(level, attribute, parse_number(target.value))
+        render_loads_results()
+        return
     group_id = str(target.getAttribute("data-group"))
     group = get_group(group_id)
     if group is None:
@@ -1940,6 +2274,40 @@ def handle_change(event):
         analysis_selected_axis_id = str(target.value)
         render_analysis_results()
         return
+    if field == "loads-zone":
+        global loads_zone
+        loads_zone = str(target.value)
+        render_loads_results()
+        return
+    if field == "loads-soil":
+        global loads_soil
+        loads_soil = str(target.value)
+        render_loads_results()
+        return
+    if field == "loads-category":
+        global loads_category
+        loads_category = str(target.value)
+        render_loads_results()
+        return
+    if field == "loads-system":
+        global loads_system
+        loads_system = str(target.value)
+        render_loads_results()
+        return
+    if field == "loads-period-mode":
+        global loads_period_mode
+        loads_period_mode = str(target.value)
+        render_loads_site_inputs()
+        render_loads_results()
+        return
+    if field == "load-preset":
+        level = get_load_level(str(target.getAttribute("data-level-id")))
+        preset_key = str(target.value)
+        if level is not None and preset_key:
+            level.cv = live_load_preset(preset_key)
+            render_load_levels()
+            render_loads_results()
+        return
     if field not in ("base", "top"):
         return
     group = get_group(str(target.getAttribute("data-group")))
@@ -1955,6 +2323,9 @@ def initialize() -> None:
     render_unit_toggle()
     render_groups()
     render_results()
+    render_load_levels()
+    render_loads_site_inputs()
+    render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
     status = by_id("python-status")

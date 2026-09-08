@@ -1,2 +1,3 @@
 [files]
 "./stiffness.py" = ""
+"./loads.py" = ""
