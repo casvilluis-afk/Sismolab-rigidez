@@ -209,14 +209,14 @@
                   <option value="S2" selected>S2 · Suelos rígidos</option>
                   <option value="S3">S3 · Suelos intermedios</option>
                   <option value="S4">S4 · Suelos blandos</option>
-                  <option value="S5">S5 · Suelos excepcionales</option>
                 </select>
-                <small>S0–S4 usan los parámetros de la E.030:2026. S5 exige un estudio específico de sitio.</small>
+                <small>Cinco perfiles S0–S4. Para S2 y S3, sin Vs30 se usan los valores conservadores indicados por la E.030:2026.</small>
               </div>
               <div class="field-block">
                 <label for="loads-category">Categoría</label>
                 <select id="loads-category" data-field="loads-category">
-                  <option value="A">A · Esencial (U=1,5)</option>
+                  <option value="A1">A₁ · Salud esencial (U=1,5 sin aislamiento)</option>
+                  <option value="A2">A₂ · Esencial (U=1,5)</option>
                   <option value="B">B · Importante (U=1,3)</option>
                   <option value="C" selected>C · Común (U=1,0)</option>
                 </select>
@@ -230,16 +230,17 @@
                   <option value="albanileria">Albañilería (R₀=3)</option>
                 </select>
               </div>
+              <p class="field-help">La Tabla 9 se comprueba automáticamente. A₁ en zonas 3 y 4 requiere aislamiento sísmico y queda fuera de este modelo convencional.</p>
             </div>
 
             <div class="analysis-form-grid analysis-form-grid--four">
               <div class="field-block">
-                <label for="loads-ia">Irregularidad en altura I<sub>a</sub></label>
-                <input id="loads-ia" type="number" step="0.05" min="0.5" max="1" value="1" data-field="loads-ia" />
+                <span class="output-label">Irregularidad en altura I<sub>a</sub></span>
+                <output id="loads-ia" class="factor-output">1,00</output>
               </div>
               <div class="field-block">
-                <label for="loads-ip">Irregularidad en planta I<sub>p</sub></label>
-                <input id="loads-ip" type="number" step="0.05" min="0.5" max="1" value="1" data-field="loads-ip" />
+                <span class="output-label">Irregularidad en planta I<sub>p</sub></span>
+                <output id="loads-ip" class="factor-output">1,00</output>
               </div>
               <div class="field-block">
                 <label for="loads-period-mode">Periodo fundamental T</label>
@@ -259,6 +260,28 @@
               <div id="loads-level-list" class="analysis-floor-list"></div>
               <button id="add-load-level" type="button" class="button add-group" data-action="add-load-level">＋ Añadir nivel <span id="load-level-count">1/12</span></button>
             </div>
+
+            <section class="irregularity-panel" aria-labelledby="irregularity-heading">
+              <div class="section-heading section-heading--compact">
+                <span class="step-number">I</span>
+                <div><h2 id="irregularity-heading">Irregularidades E.030:2026</h2><p>I<sub>a</sub> e I<sub>p</sub> se obtienen con el menor factor aplicable.</p></div>
+              </div>
+              <div class="irregularity-manual-grid">
+                <fieldset>
+                  <legend>Inspección en altura</legend>
+                  <label class="check-card"><input id="loads-discontinuity-vertical" type="checkbox" data-field="loads-discontinuity-vertical" /><span><strong>Discontinuidad vertical</strong><small>Desalineamiento de un elemento que resiste más de 10% del cortante.</small></span><b>0,80</b></label>
+                  <label class="check-card"><input id="loads-extreme-discontinuity-vertical" type="checkbox" data-field="loads-extreme-discontinuity-vertical" /><span><strong>Discontinuidad extrema</strong><small>Los elementos discontinuos superan 25% del cortante total.</small></span><b>0,60</b></label>
+                </fieldset>
+                <fieldset>
+                  <legend>Inspección en planta</legend>
+                  <label class="check-card"><input id="loads-reentrant-corners" type="checkbox" data-field="loads-reentrant-corners" /><span><strong>Esquinas entrantes</strong><small>Entrantes mayores que 20% en ambas direcciones.</small></span><b>0,90</b></label>
+                  <label class="check-card"><input id="loads-diaphragm-discontinuity" type="checkbox" data-field="loads-diaphragm-discontinuity" /><span><strong>Diafragma discontinuo</strong><small>Aberturas mayores que 50% o sección neta menor que 50%.</small></span><b>0,85</b></label>
+                  <label class="check-card"><input id="loads-nonparallel-systems" type="checkbox" data-field="loads-nonparallel-systems" /><span><strong>Sistemas no paralelos</strong><small>Con las excepciones normativas de 30° y 10% del cortante.</small></span><b>0,90</b></label>
+                </fieldset>
+              </div>
+              <p class="field-help">La rigidez, masa, geometría y torsión se revisan automáticamente. El piso débil sólo se evalúa cuando ingresas Vn,x y Vn,y por nivel.</p>
+              <div id="loads-irregularity-results"></div>
+            </section>
           </section>
 
           <section class="analysis-result-panel" aria-labelledby="loads-result-heading">
@@ -327,7 +350,7 @@
               <div class="field-block">
                 <label for="analysis-levels">Número de niveles</label>
                 <select id="analysis-levels" data-field="analysis-levels">
-                  <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option>
+                  <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option><option value="9">9 niveles</option><option value="10">10 niveles</option><option value="11">11 niveles</option><option value="12">12 niveles</option>
                 </select>
               </div>
               <div class="field-block">
@@ -441,7 +464,7 @@
 
         <div class="analysis-scope">
           <strong>Alcance de esta etapa</strong>
-          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. Usa la misma sección y el mismo grupo de columnas en todos los pisos; todavía no incluye vigas deformables, interacción suelo–estructura, segundo orden ni el procedimiento completo de diseño de la E.030.</p>
+          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. La geometría base de los grupos se repite; cuando defines Kx o Ky por piso en Metrado, su aporte se escala proporcionalmente en ese nivel. No incluye vigas deformables, interacción suelo–estructura, segundo orden, combinación ortogonal 100% + 30% ni el procedimiento dinámico completo de la E.030.</p>
         </div>
       </section>
 

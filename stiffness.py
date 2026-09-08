@@ -267,7 +267,9 @@ def local_shear_matrix(story_stiffnesses: list[float]) -> list[list[float]]:
         raise ValueError("El análisis necesita al menos un nivel.")
     matrix = _zero_matrix(len(story_stiffnesses), len(story_stiffnesses))
     for story, stiffness in enumerate(story_stiffnesses):
-        stiffness = _positive_number(stiffness, f"La rigidez del nivel {story + 1}")
+        stiffness = float(stiffness)
+        if not isfinite(stiffness) or stiffness < 0:
+            raise ValueError(f"La rigidez del nivel {story + 1} no puede ser negativa.")
         matrix[story][story] += stiffness
         if story > 0:
             matrix[story - 1][story - 1] += stiffness
@@ -279,9 +281,17 @@ def local_shear_matrix(story_stiffnesses: list[float]) -> list[list[float]]:
 def frame_transformation(
     levels: int,
     beta_degrees: float,
-    lever_arm_m: float,
+    lever_arm_m: float | list[float],
 ) -> list[list[float]]:
     """Relaciona {ux, uy, theta} del diafragma con el desplazamiento del eje."""
+    if isinstance(lever_arm_m, (list, tuple)):
+        if len(lever_arm_m) != levels:
+            raise ValueError("Debe existir un brazo de palanca por nivel.")
+        lever_arms = [float(value) for value in lever_arm_m]
+    else:
+        lever_arms = [float(lever_arm_m)] * levels
+    if not all(isfinite(value) for value in lever_arms):
+        raise ValueError("Los brazos de palanca deben ser números válidos.")
     beta = radians(float(beta_degrees))
     direction_cosine = cos(beta)
     direction_sine = sin(beta)
@@ -290,7 +300,7 @@ def frame_transformation(
         offset = 3 * level
         matrix[level][offset] = direction_cosine
         matrix[level][offset + 1] = direction_sine
-        matrix[level][offset + 2] = float(lever_arm_m)
+        matrix[level][offset + 2] = lever_arms[level]
     return matrix
 
 
@@ -331,16 +341,29 @@ def solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[
     return solution
 
 
+def _level_values(value: float | list[float], levels: int, field_name: str) -> list[float]:
+    if isinstance(value, (list, tuple)):
+        if len(value) != levels:
+            raise ValueError(f"{field_name} debe tener un valor por nivel.")
+        values = [float(item) for item in value]
+    else:
+        values = [float(value)] * levels
+    if not all(isfinite(item) for item in values):
+        raise ValueError(f"{field_name} debe contener números válidos.")
+    return values
+
+
 def analyze_pseudotridimensional(
     groups: list[ColumnGroup],
     story_heights_m: list[float],
     floor_forces_kn: list[float],
     alpha_degrees: float,
-    center_mass_x_m: float,
-    center_mass_y_m: float,
-    accidental_eccentricity_x_m: float,
-    accidental_eccentricity_y_m: float,
+    center_mass_x_m: float | list[float],
+    center_mass_y_m: float | list[float],
+    accidental_eccentricity_x_m: float | list[float],
+    accidental_eccentricity_y_m: float | list[float],
     units: UnitSystem,
+    story_stiffness_overrides: dict[str, list[float]] | None = None,
 ) -> dict[str, object]:
     """Resuelve un edificio de diafragmas rígidos con 3 GDL por nivel.
 
@@ -361,35 +384,75 @@ def analyze_pseudotridimensional(
         for index, value in enumerate(story_heights_m)
     ]
     forces = [float(value) for value in floor_forces_kn]
-    scalar_inputs = (
-        float(alpha_degrees),
-        float(center_mass_x_m),
-        float(center_mass_y_m),
-        float(accidental_eccentricity_x_m),
-        float(accidental_eccentricity_y_m),
-    )
+    scalar_inputs = (float(alpha_degrees),)
     if not all(isfinite(value) for value in (*forces, *scalar_inputs)):
         raise ValueError("Las fuerzas, coordenadas y excentricidades deben ser números válidos.")
+    centers_x = _level_values(center_mass_x_m, levels, "El centro de masa X")
+    centers_y = _level_values(center_mass_y_m, levels, "El centro de masa Y")
+    eccentricities_x = _level_values(
+        accidental_eccentricity_x_m, levels, "La excentricidad accidental en X"
+    )
+    eccentricities_y = _level_values(
+        accidental_eccentricity_y_m, levels, "La excentricidad accidental en Y"
+    )
+
+    override_values = {"X": [0.0] * levels, "Y": [0.0] * levels}
+    if story_stiffness_overrides:
+        for direction in ("X", "Y"):
+            if direction not in story_stiffness_overrides:
+                continue
+            values = _level_values(
+                story_stiffness_overrides[direction],
+                levels,
+                f"La rigidez de control en {direction}",
+            )
+            if any(value < 0 for value in values):
+                raise ValueError("Las rigideces de control no pueden ser negativas.")
+            override_values[direction] = values
+
+    raw_stiffnesses: list[list[float]] = []
+    direction_totals = {"X": [0.0] * levels, "Y": [0.0] * levels}
+    for group in groups:
+        validate_group(group)
+        group_stiffnesses = []
+        for height in heights:
+            stiffness = calculate_group(group, height, units).contribution
+            if units == "MKS":
+                stiffness *= KN_PER_TONF
+            group_stiffnesses.append(stiffness)
+        raw_stiffnesses.append(group_stiffnesses)
+        for level, stiffness in enumerate(group_stiffnesses):
+            direction_totals[group.direction][level] += stiffness
+
+    direction_scales = {"X": [1.0] * levels, "Y": [1.0] * levels}
+    for direction in ("X", "Y"):
+        for level, override in enumerate(override_values[direction]):
+            if override <= 0:
+                continue
+            total = direction_totals[direction][level]
+            if total <= 0:
+                raise ValueError(
+                    f"No existe rigidez base en {direction} para aplicar el control del nivel {level + 1}."
+                )
+            direction_scales[direction][level] = override / total
 
     dofs = 3 * levels
     global_matrix = _zero_matrix(dofs, dofs)
     frame_results: list[dict[str, object]] = []
 
-    for group in groups:
-        validate_group(group)
+    for group, raw_group_stiffnesses in zip(groups, raw_stiffnesses):
         beta = radians(float(group.beta))
-        lever_arm = (
-            -(float(group.x0) - float(center_mass_x_m)) * sin(beta)
-            + (float(group.y0) - float(center_mass_y_m)) * cos(beta)
-        )
-        story_stiffnesses = []
-        for height in heights:
-            stiffness = calculate_group(group, height, units).contribution
-            if units == "MKS":
-                stiffness *= KN_PER_TONF
-            story_stiffnesses.append(stiffness)
+        lever_arms = [
+            -(float(group.x0) - centers_x[level]) * sin(beta)
+            + (float(group.y0) - centers_y[level]) * cos(beta)
+            for level in range(levels)
+        ]
+        story_stiffnesses = [
+            stiffness * direction_scales[group.direction][level]
+            for level, stiffness in enumerate(raw_group_stiffnesses)
+        ]
         local_matrix = local_shear_matrix(story_stiffnesses)
-        transformation = frame_transformation(levels, group.beta, lever_arm)
+        transformation = frame_transformation(levels, group.beta, lever_arms)
         contribution = _matmul(_matmul(_transpose(transformation), local_matrix), transformation)
         for row in range(dofs):
             for column in range(dofs):
@@ -401,7 +464,8 @@ def analyze_pseudotridimensional(
                 "beta": float(group.beta),
                 "x0": float(group.x0),
                 "y0": float(group.y0),
-                "lever_arm": lever_arm,
+                "lever_arm": lever_arms[0],
+                "lever_arms": lever_arms,
                 "story_stiffnesses": story_stiffnesses,
                 "local_matrix": local_matrix,
                 "transformation": transformation,
@@ -411,12 +475,12 @@ def analyze_pseudotridimensional(
     alpha = radians(float(alpha_degrees))
     force_vector: list[float] = []
     floor_loads: list[dict[str, float]] = []
-    for force in forces:
+    for level, force in enumerate(forces):
         force_x = force * cos(alpha)
         force_y = force * sin(alpha)
         moment_z = (
-            float(accidental_eccentricity_x_m) * force_y
-            - float(accidental_eccentricity_y_m) * force_x
+            eccentricities_x[level] * force_y
+            - eccentricities_y[level] * force_x
         )
         force_vector.extend((force_x, force_y, moment_z))
         floor_loads.append({"fx": force_x, "fy": force_y, "mz": moment_z})
@@ -430,7 +494,7 @@ def analyze_pseudotridimensional(
         beta = radians(float(frame["beta"]))
         direction_x, direction_y = cos(beta), sin(beta)
         stiffness = float(frame["story_stiffnesses"][0])
-        lever_arm = float(frame["lever_arm"])
+        lever_arm = float(frame["lever_arms"][0])
         a_xx += stiffness * direction_x * direction_x
         a_xy += stiffness * direction_x * direction_y
         a_yy += stiffness * direction_y * direction_y
@@ -442,8 +506,8 @@ def analyze_pseudotridimensional(
         q_x = (-b_x * a_yy + a_xy * b_y) / determinant
         q_y = (a_xy * b_x - a_xx * b_y) / determinant
         center_rigidity = {
-            "x": float(center_mass_x_m) + q_y,
-            "y": float(center_mass_y_m) - q_x,
+            "x": centers_x[0] + q_y,
+            "y": centers_y[0] - q_x,
         }
 
     displacements = []
@@ -497,4 +561,87 @@ def analyze_pseudotridimensional(
         "displacements": displacements,
         "frames": frame_results,
         "units": {"force": "kN", "length": "m", "rotation": "rad"},
+    }
+
+
+def assess_torsional_irregularity(
+    groups: list[ColumnGroup],
+    story_heights_m: list[float],
+    floor_forces_kn: list[float],
+    center_mass_x_m: float | list[float],
+    center_mass_y_m: float | list[float],
+    plan_x_m: list[float],
+    plan_y_m: list[float],
+    drift_limit: float,
+    units: UnitSystem,
+    story_stiffness_overrides: dict[str, list[float]] | None = None,
+    displacement_scale: float = 1.0,
+) -> dict[str, object]:
+    """Control torsional de la Tabla 12 usando los dos signos de 5% accidental."""
+
+    levels = len(story_heights_m)
+    if len(plan_x_m) != levels or len(plan_y_m) != levels:
+        raise ValueError("Las dimensiones de planta deben corresponder a todos los niveles.")
+    if drift_limit <= 0:
+        raise ValueError("El límite de deriva debe ser mayor que cero.")
+    if not isfinite(float(displacement_scale)) or displacement_scale <= 0:
+        raise ValueError("El factor de amplificación de desplazamientos debe ser positivo.")
+    plan_x = [_positive_number(value, f"La dimensión X del nivel {index + 1}") for index, value in enumerate(plan_x_m)]
+    plan_y = [_positive_number(value, f"La dimensión Y del nivel {index + 1}") for index, value in enumerate(plan_y_m)]
+
+    cases: list[dict[str, float | int | str | bool]] = []
+    for direction, alpha in (("X", 0.0), ("Y", 90.0)):
+        for sign in (-1.0, 1.0):
+            ecc_x = [sign * 0.05 * value if direction == "Y" else 0.0 for value in plan_x]
+            ecc_y = [sign * 0.05 * value if direction == "X" else 0.0 for value in plan_y]
+            result = analyze_pseudotridimensional(
+                groups,
+                story_heights_m,
+                floor_forces_kn,
+                alpha,
+                center_mass_x_m,
+                center_mass_y_m,
+                ecc_x,
+                ecc_y,
+                units,
+                story_stiffness_overrides,
+            )
+            previous_translation = 0.0
+            previous_rotation = 0.0
+            for level in range(levels):
+                ux, uy, rotation = result["displacement_vector"][3 * level : 3 * level + 3]
+                translation = ux if direction == "X" else uy
+                relative_translation = translation - previous_translation
+                relative_rotation = rotation - previous_rotation
+                half_span = 0.5 * (plan_y[level] if direction == "X" else plan_x[level])
+                if direction == "X":
+                    edge_a = relative_translation - half_span * relative_rotation
+                    edge_b = relative_translation + half_span * relative_rotation
+                else:
+                    edge_a = relative_translation + half_span * relative_rotation
+                    edge_b = relative_translation - half_span * relative_rotation
+                maximum = max(abs(edge_a), abs(edge_b)) * displacement_scale
+                average = 0.5 * (abs(edge_a) + abs(edge_b)) * displacement_scale
+                ratio = maximum / average if average > 1e-15 else 1.0
+                drift = maximum / float(story_heights_m[level])
+                applicable = drift > 0.5 * drift_limit
+                cases.append(
+                    {
+                        "direction": direction,
+                        "sign": int(sign),
+                        "level": level + 1,
+                        "delta_max": maximum,
+                        "delta_average": average,
+                        "ratio": ratio,
+                        "drift": drift,
+                        "applicable": applicable,
+                    }
+                )
+                previous_translation = translation
+                previous_rotation = rotation
+
+    return {
+        "torsional": any(bool(case["applicable"]) and float(case["ratio"]) > 1.30 for case in cases),
+        "extreme_torsional": any(bool(case["applicable"]) and float(case["ratio"]) > 1.50 for case in cases),
+        "cases": cases,
     }

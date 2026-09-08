@@ -9,11 +9,13 @@ from pyscript import document, when
 
 from stiffness import (
     ColumnGroup,
+    KN_PER_TONF,
     STEEL_MODULUS_MKS,
     STEEL_MODULUS_SI,
     boundary_description,
     boundary_factor,
     analyze_pseudotridimensional,
+    assess_torsional_irregularity,
     calculate_group,
     calculate_story,
     convert_group_units,
@@ -30,12 +32,16 @@ from loads import (
     GRAVITY_ACCELERATION,
     LIVE_LOAD_PRESETS,
     ROOF_CV_FACTOR,
+    IrregularityFacts,
     LevelLoad,
     SeismicSiteParams,
+    assess_irregularities,
     beam_takeoff,
     combine_mass_properties,
     component_mass_properties,
     level_gravity_breakdown,
+    level_seismic_weight,
+    irregularity_restriction,
     live_load_preset,
     static_seismic_forces,
 )
@@ -48,6 +54,8 @@ current_stage = "rigidity"
 analysis_level_count = 2
 analysis_heights = [3.0, 3.0]
 analysis_forces = [100.0, 200.0]
+analysis_stiffness_x = [0.0, 0.0]
+analysis_stiffness_y = [0.0, 0.0]
 analysis_alpha = 0.0
 analysis_cm_x = 2.5
 analysis_cm_y = 2.0
@@ -84,6 +92,11 @@ loads_category = "C"
 loads_system = "muros"
 loads_ia = 1.0
 loads_ip = 1.0
+loads_discontinuity_vertical = False
+loads_extreme_discontinuity_vertical = False
+loads_reentrant_corners = False
+loads_diaphragm_discontinuity = False
+loads_nonparallel_systems = False
 loads_period_mode = "auto"
 loads_period_manual = 0.30
 
@@ -171,6 +184,53 @@ def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
 
 def column_takeoffs_for_levels() -> list[dict[str, float | int]]:
     return [column_takeoff(level.height) for level in load_levels]
+
+
+def _derived_story_stiffnesses() -> tuple[list[float], list[float]]:
+    """Rigideces Kx,Ky por nivel, siempre expresadas en kN/m."""
+
+    stiffness_x: list[float] = []
+    stiffness_y: list[float] = []
+    for level in load_levels:
+        story = calculate_story(groups, level.height, units)
+        conversion = KN_PER_TONF if units == "MKS" else 1.0
+        derived_x = float(story["totals"]["X"]) * conversion
+        derived_y = float(story["totals"]["Y"]) * conversion
+        stiffness_x.append(
+            float(level.stiffness_x_override) if level.stiffness_x_override > 0 else derived_x
+        )
+        stiffness_y.append(
+            float(level.stiffness_y_override) if level.stiffness_y_override > 0 else derived_y
+        )
+    return stiffness_x, stiffness_y
+
+
+def _level_seismic_mass_properties(
+    level: LevelLoad,
+    column_rows: list[dict[str, object]],
+    category: str,
+) -> dict[str, float]:
+    """Centro de masa coherente con el peso sísmico usado en el metrado."""
+
+    column_weight = sum(float(row["weight"]) for row in column_rows)
+    breakdown = level_gravity_breakdown(level, column_weight)
+    live_factor = ROOF_CV_FACTOR if level.is_roof else CATEGORY_CV_FACTOR.get(category, 0.25)
+    components = [dict(row) for row in column_rows]
+    components.extend(
+        (
+            component_mass_properties(
+                breakdown["beam_weight"], level.beam_center_x, level.beam_center_y
+            ),
+            component_mass_properties(breakdown["slab_weight"], level.center_x, level.center_y),
+            component_mass_properties(
+                breakdown["other_surface_dead"], level.center_x, level.center_y
+            ),
+            component_mass_properties(
+                breakdown["live_total"], level.center_x, level.center_y, live_factor
+            ),
+        )
+    )
+    return combine_mass_properties(components)
 
 
 def shape_name(shape: str) -> str:
@@ -1714,6 +1774,10 @@ def render_analysis_results() -> None:
             analysis_ecc_x,
             analysis_ecc_y,
             units,
+            {
+                "X": analysis_stiffness_x,
+                "Y": analysis_stiffness_y,
+            },
         )
     except ValueError as error:
         _clear_analysis_results(str(error))
@@ -1759,7 +1823,7 @@ def render_analysis_results() -> None:
             moment = frame["end_moments"][level]
             moment_text = "—" if moment is None else format_number(moment, 3)
             frame_rows.append(
-                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['lever_arm'], 3)}</td><td>{format_number(frame['story_shears'][level], 3)}</td><td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
+                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['lever_arms'][level], 3)}</td><td>{format_number(frame['story_shears'][level], 3)}</td><td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
             )
     by_id("analysis-frames").innerHTML = f"""
       <h3>Distribución de acciones por eje</h3>
@@ -1789,6 +1853,10 @@ def load_level_card(level: LevelLoad, index: int) -> str:
     label_value = escape(str(level.label), quote=True)
     columns = column_takeoff(level.height)
     beam_volume, beam_weight = beam_takeoff(level)
+    story = calculate_story(groups, level.height, units)
+    stiffness_conversion = KN_PER_TONF if units == "MKS" else 1.0
+    automatic_kx = float(story["totals"]["X"]) * stiffness_conversion
+    automatic_ky = float(story["totals"]["Y"]) * stiffness_conversion
     return f"""
     <article class="column-card load-level-card" data-card-id="{level.id}">
       <div class="column-card__head">
@@ -1848,6 +1916,21 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         <small>CM incluye el peso de esta losa. El excedente se reporta como acabados y tabiquería.</small>
       </section>
 
+      <section class="irregularity-level-card" aria-labelledby="irregularity-level-{level.id}">
+        <div class="element-takeoff-head">
+          <div><span aria-hidden="true">K</span><div><strong id="irregularity-level-{level.id}">Datos para irregularidades</strong><small>Tabla 11 · valores de este entrepiso</small></div></div>
+          <span>0 en K usa el modelo · 0 en Vn deja sin evaluar</span>
+        </div>
+        <div class="irregularity-level-fields">
+          <div class="field-block"><label for="load-plan-x-{level.id}">Dimensión resistente X</label><div class="input-with-unit"><input id="load-plan-x-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_x)}" data-level-id="{level.id}" data-field="load-plan-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-plan-y-{level.id}">Dimensión resistente Y</label><div class="input-with-unit"><input id="load-plan-y-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_y)}" data-level-id="{level.id}" data-field="load-plan-y" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-kx-{level.id}">Kx opcional</label><div class="input-with-unit"><input id="load-kx-{level.id}" type="number" min="0" step="100" value="{input_number(level.stiffness_x_override)}" data-level-id="{level.id}" data-field="load-kx" /><span>kN/m</span></div><small>Automática: <output id="load-kx-auto-{level.id}">{format_number(automatic_kx, 1)}</output> kN/m</small></div>
+          <div class="field-block"><label for="load-ky-{level.id}">Ky opcional</label><div class="input-with-unit"><input id="load-ky-{level.id}" type="number" min="0" step="100" value="{input_number(level.stiffness_y_override)}" data-level-id="{level.id}" data-field="load-ky" /><span>kN/m</span></div><small>Automática: <output id="load-ky-auto-{level.id}">{format_number(automatic_ky, 1)}</output> kN/m</small></div>
+          <div class="field-block"><label for="load-vnx-{level.id}">Resistencia Vn,x</label><div class="input-with-unit"><input id="load-vnx-{level.id}" type="number" min="0" step="10" value="{input_number(level.strength_x)}" data-level-id="{level.id}" data-field="load-vnx" /><span>kN</span></div></div>
+          <div class="field-block"><label for="load-vny-{level.id}">Resistencia Vn,y</label><div class="input-with-unit"><input id="load-vny-{level.id}" type="number" min="0" step="10" value="{input_number(level.strength_y)}" data-level-id="{level.id}" data-field="load-vny" /><span>kN</span></div></div>
+        </div>
+      </section>
+
       <section class="element-takeoff-card" aria-labelledby="takeoff-{level.id}">
         <div class="element-takeoff-head">
           <div><span aria-hidden="true">▦</span><div><strong id="takeoff-{level.id}">Metrado de elementos</strong><small>Se suma a la carga muerta superficial</small></div></div>
@@ -1884,23 +1967,149 @@ def render_loads_site_inputs() -> None:
     by_id("loads-soil").value = loads_soil
     by_id("loads-category").value = loads_category
     by_id("loads-system").value = loads_system
-    by_id("loads-ia").value = input_number(loads_ia)
-    by_id("loads-ip").value = input_number(loads_ip)
+    by_id("loads-ia").textContent = input_number(loads_ia)
+    by_id("loads-ip").textContent = input_number(loads_ip)
+    by_id("loads-discontinuity-vertical").checked = loads_discontinuity_vertical
+    by_id("loads-extreme-discontinuity-vertical").checked = loads_extreme_discontinuity_vertical
+    by_id("loads-reentrant-corners").checked = loads_reentrant_corners
+    by_id("loads-diaphragm-discontinuity").checked = loads_diaphragm_discontinuity
+    by_id("loads-nonparallel-systems").checked = loads_nonparallel_systems
     by_id("loads-period-mode").value = loads_period_mode
     period_input = by_id("loads-period-manual")
     period_input.value = input_number(loads_period_manual)
     period_input.disabled = loads_period_mode != "manual"
 
 
-def _build_site_params() -> SeismicSiteParams:
+def _manual_irregularity_facts() -> IrregularityFacts:
+    return IrregularityFacts(
+        discontinuity_vertical=loads_discontinuity_vertical,
+        extreme_discontinuity_vertical=loads_extreme_discontinuity_vertical,
+        reentrant_corners=loads_reentrant_corners,
+        diaphragm_discontinuity=loads_diaphragm_discontinuity,
+        nonparallel_systems=loads_nonparallel_systems,
+    )
+
+
+def _current_irregularity_assessment() -> dict[str, object]:
+    column_rows = [column_takeoff_rows(level.height) for level in load_levels]
+    column_weights = [sum(float(row["weight"]) for row in rows) for rows in column_rows]
+    weights = [
+        level_seismic_weight(level, loads_category, column_weights[index])
+        for index, level in enumerate(load_levels)
+    ]
+    stiffness_x, stiffness_y = _derived_story_stiffnesses()
+    facts = _manual_irregularity_facts()
+    base_assessment = assess_irregularities(
+        load_levels,
+        weights,
+        stiffness_x,
+        stiffness_y,
+        [level.strength_x for level in load_levels],
+        [level.strength_y for level in load_levels],
+        facts,
+    )
+    base_regular = (
+        float(base_assessment["ia"]) == 1.0
+        and float(base_assessment["ip"]) == 1.0
+    )
+
+    torsion_status = "No evaluada: el modelo necesita ejes estables en X, Y y torsión."
+    torsion_cases: list[dict[str, object]] = []
+    try:
+        regular_site = SeismicSiteParams(
+            zone=loads_zone,
+            soil=loads_soil,
+            category=loads_category,
+            system=loads_system,
+            irregularity_height=float(base_assessment["ia"]),
+            irregularity_plan=float(base_assessment["ip"]),
+            period_override=loads_period_manual if loads_period_mode == "manual" else None,
+        )
+        provisional = static_seismic_forces(
+            load_levels,
+            regular_site,
+            column_weights,
+            enforce_minimum_c_over_r=False,
+        )
+        mass_properties = [
+            _level_seismic_mass_properties(level, column_rows[index], loads_category)
+            for index, level in enumerate(load_levels)
+        ]
+        center_x = [item["center_x"] for item in mass_properties]
+        center_y = [item["center_y"] for item in mass_properties]
+        torsion = assess_torsional_irregularity(
+            groups,
+            [level.height for level in load_levels],
+            provisional.level_forces,
+            center_x,
+            center_y,
+            [level.plan_x for level in load_levels],
+            [level.plan_y for level in load_levels],
+            0.005 if loads_system == "albanileria" else 0.007,
+            units,
+            {
+                "X": [level.stiffness_x_override for level in load_levels],
+                "Y": [level.stiffness_y_override for level in load_levels],
+            },
+            (0.75 if base_regular else 0.85) * provisional.r,
+        )
+        facts.torsional = bool(torsion["torsional"])
+        facts.extreme_torsional = bool(torsion["extreme_torsional"])
+        torsion_cases = list(torsion["cases"])
+        torsion_status = (
+            "Evaluada automáticamente con ±5% de excentricidad accidental y "
+            "desplazamientos amplificados conforme al artículo 50."
+        )
+    except (ValueError, ZeroDivisionError):
+        pass
+
+    assessment = assess_irregularities(
+        load_levels,
+        weights,
+        stiffness_x,
+        stiffness_y,
+        [level.strength_x for level in load_levels],
+        [level.strength_y for level in load_levels],
+        facts,
+    )
+    assessment["torsion_status"] = torsion_status
+    assessment["torsion_cases"] = torsion_cases
+    status, restriction = irregularity_restriction(
+        loads_category,
+        loads_zone,
+        len(load_levels),
+        sum(level.height for level in load_levels),
+        assessment,
+    )
+    assessment["restriction_status"] = status
+    assessment["restriction"] = restriction
+    total_height = sum(level.height for level in load_levels)
+    regular = float(assessment["ia"]) == 1.0 and float(assessment["ip"]) == 1.0
+    static_allowed = (
+        loads_zone == "1"
+        or (regular and total_height <= 30.0)
+        or (loads_system in ("muros", "albanileria") and total_height <= 15.0)
+    )
+    assessment["static_method_allowed"] = static_allowed
+    assessment["static_method_note"] = (
+        "La generación de fuerzas estáticas es admisible; la combinación direccional 100% + 30% se realiza fuera de este prototipo."
+        if static_allowed
+        else "El método estático equivalente no satisface el alcance del artículo 33.2; corresponde análisis dinámico modal espectral."
+    )
+    return assessment
+
+
+def _build_site_params(assessment: dict[str, object] | None = None) -> SeismicSiteParams:
+    if assessment is None:
+        assessment = _current_irregularity_assessment()
     manual_period = loads_period_manual if loads_period_mode == "manual" else None
     return SeismicSiteParams(
         zone=loads_zone,
         soil=loads_soil,
         category=loads_category,
         system=loads_system,
-        irregularity_height=max(loads_ia, 0.1),
-        irregularity_plan=max(loads_ip, 0.1),
+        irregularity_height=float(assessment["ia"]),
+        irregularity_plan=float(assessment["ip"]),
         period_override=manual_period,
     )
 
@@ -1911,7 +2120,7 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
       <div class="step-block">
         <h4><span class="step-badge">1</span>Parámetros de sitio (E.030)</h4>
         <p>Z = {format_number(result.z, 2)} · U = {format_number(result.u, 2)} · S = {format_number(result.s, 2)} · R = {format_number(result.r, 2)} (R₀ · I<sub>a</sub> · I<sub>p</sub>)</p>
-        <p>T<sub>P</sub> = {format_number(result.tp, 2)} s · T<sub>L</sub> = {format_number(result.tl, 2)} s · T = {format_number(result.period, 3)} s → C = {format_number(result.c, 3)}</p>
+        <p>T<sub>P</sub> = {format_number(result.tp, 2)} s · T<sub>L</sub> = {format_number(result.tl, 2)} s · T = {format_number(result.period, 3)} s → C espectral = {format_number(result.c, 3)} · C usado = {format_number(result.c_effective, 3)}</p>
       </div>
       <div class="step-block">
         <h4><span class="step-badge">2</span>Peso sísmico por nivel</h4>
@@ -1923,7 +2132,7 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
       </div>
       <div class="step-block">
         <h4><span class="step-badge">4</span>Cortante en la base</h4>
-        <p><code>V = (Z·U·C·S / R) · ΣP</code> = {format_number(result.base_shear_coefficient, 4)} × {format_number(result.weight_total, 1)} kN = <strong>{format_number(result.base_shear, 1)} kN</strong></p>
+        <p><code>V = (Z·U·C·S / R) · ΣP</code>, verificando <code>C/R ≥ 0,11</code>: {format_number(result.base_shear_coefficient, 4)} × {format_number(result.weight_total, 1)} kN = <strong>{format_number(result.base_shear, 1)} kN</strong></p>
       </div>
       <div class="step-block">
         <h4><span class="step-badge">5</span>Distribución en altura</h4>
@@ -1941,6 +2150,55 @@ def _mass_cells(properties: dict[str, float]) -> str:
         f"<td>{format_number(properties['mx'], 3)}</td>"
         f"<td>{format_number(properties['my'], 3)}</td>"
     )
+
+
+def _optional_ratio(value: float | None) -> str:
+    return "—" if value is None else format_number(value, 3)
+
+
+def render_irregularity_results(assessment: dict[str, object]) -> None:
+    by_id("loads-ia").textContent = format_number(float(assessment["ia"]), 2)
+    by_id("loads-ip").textContent = format_number(float(assessment["ip"]), 2)
+    check_rows = []
+    for item in assessment["checks"]:
+        state = "IRREGULAR" if item["active"] else "Regular"
+        state_class = "is-irregular" if item["active"] else "is-regular"
+        check_rows.append(
+            f'<tr><td>{escape(str(item["name"]))}</td><td>{escape(str(item["group"] == "height" and "Altura" or "Planta"))}</td>'
+            f'<td>{format_number(float(item["factor"]), 2)}</td><td class="irregularity-state {state_class}">{state}</td>'
+            f'<td>{escape(str(item["detail"]))}</td></tr>'
+        )
+
+    story_rows = []
+    for row in assessment["rows"]:
+        story_rows.append(
+            f'<tr><td>{escape(str(row["label"]))}</td><td>{format_number(float(row["weight"]), 1)}</td>'
+            f'<td>{format_number(float(row["kx"]), 1)}</td><td>{_optional_ratio(row["k_adjacent_x"])}</td><td>{_optional_ratio(row["k_average3_x"])}</td>'
+            f'<td>{format_number(float(row["ky"]), 1)}</td><td>{_optional_ratio(row["k_adjacent_y"])}</td><td>{_optional_ratio(row["k_average3_y"])}</td>'
+            f'<td>{_optional_ratio(row["strength_ratio_x"])}</td><td>{_optional_ratio(row["strength_ratio_y"])}</td></tr>'
+        )
+
+    torsion_cases = [case for case in assessment["torsion_cases"] if case["applicable"]]
+    if torsion_cases:
+        critical = max(torsion_cases, key=lambda case: float(case["ratio"]))
+        torsion_detail = (
+            f"Caso crítico: {critical['direction']} · signo {'+' if critical['sign'] > 0 else '−'} · "
+            f"N{critical['level']} · Δmax/Δprom = {format_number(float(critical['ratio']), 3)}."
+        )
+    else:
+        torsion_detail = "Ningún caso superó el 50% de la deriva permisible, o el modelo aún no es estable."
+    restriction_status = escape(str(assessment["restriction_status"]))
+    by_id("loads-irregularity-results").innerHTML = f"""
+      <div class="irregularity-verdict irregularity-verdict--{restriction_status}">
+        <div><span>Factores gobernantes</span><strong>I<sub>a</sub> = {format_number(float(assessment['ia']), 2)} · I<sub>p</sub> = {format_number(float(assessment['ip']), 2)}</strong></div>
+        <p>{escape(str(assessment['restriction']))}<br>{escape(str(assessment['static_method_note']))}</p>
+      </div>
+      <p class="irregularity-auto-note"><strong>Torsión:</strong> {escape(str(assessment['torsion_status']))} {escape(torsion_detail)}</p>
+      <div class="table-scroll"><table class="data-table irregularity-table"><thead><tr><th>Control E.030:2026</th><th>Tipo</th><th>Factor</th><th>Estado</th><th>Resultado / criterio</th></tr></thead><tbody>{''.join(check_rows)}</tbody></table></div>
+      <details class="irregularity-details"><summary>Ver ratios numéricos por nivel</summary>
+        <div class="table-scroll"><table class="data-table irregularity-story-table"><thead><tr><th>Nivel</th><th>P (kN)</th><th>Kx (kN/m)</th><th>Kx/Ksup.</th><th>Kx/Kprom.3</th><th>Ky (kN/m)</th><th>Ky/Ksup.</th><th>Ky/Kprom.3</th><th>Vnx/Vsup.</th><th>Vny/Vsup.</th></tr></thead><tbody>{''.join(story_rows)}</tbody></table></div>
+      </details>
+    """
 
 
 def _floor_takeoff_html(
@@ -2046,8 +2304,8 @@ def _floor_takeoff_html(
 
 
 def render_loads_results() -> None:
+    global loads_ia, loads_ip
     warning = by_id("loads-warning")
-    site = _build_site_params()
     column_rows_by_level = [column_takeoff_rows(level.height) for level in load_levels]
     column_takeoffs = column_takeoffs_for_levels()
     column_weights = [float(item["weight"]) for item in column_takeoffs]
@@ -2068,6 +2326,10 @@ def render_loads_results() -> None:
     try:
         if not load_levels:
             raise ValueError("Agrega al menos un nivel para calcular el metrado.")
+        assessment = _current_irregularity_assessment()
+        loads_ia = float(assessment["ia"])
+        loads_ip = float(assessment["ip"])
+        site = _build_site_params(assessment)
         result = static_seismic_forces(load_levels, site, column_weights)
     except (ValueError, ZeroDivisionError) as error:
         warning.hidden = False
@@ -2078,18 +2340,22 @@ def render_loads_results() -> None:
         by_id("loads-weight-chart").innerHTML = ""
         by_id("loads-force-chart").innerHTML = ""
         by_id("loads-table").innerHTML = ""
+        by_id("loads-irregularity-results").innerHTML = (
+            '<div class="analysis-placeholder">Completa datos válidos para evaluar las irregularidades.</div>'
+        )
         _update_details_panel("loads-steps", ".steps-card", "")
         return
 
     warning.hidden = True
     warning.textContent = ""
+    render_irregularity_results(assessment)
 
     period_source = "estimado T = hn/CT" if loads_period_mode == "auto" else "manual"
     by_id("loads-summary").innerHTML = f"""
       <div class="analysis-metric"><span>Peso sísmico total ΣP</span><strong>{format_number(result.weight_total, 1)}</strong><small>kN</small></div>
       <div class="analysis-metric"><span>Cortante basal V</span><strong>{format_number(result.base_shear, 1)}</strong><small>kN</small></div>
       <div class="analysis-metric"><span>Periodo T</span><strong>{format_number(result.period, 3)}</strong><small>s · {period_source}</small></div>
-      <div class="analysis-metric"><span>Coef. Z·U·C·S/R</span><strong>{format_number(result.base_shear_coefficient, 4)}</strong><small>C = {format_number(result.c, 3)} · k = {format_number(result.height_k, 2)}</small></div>
+      <div class="analysis-metric"><span>Coef. Z·U·C·S/R</span><strong>{format_number(result.base_shear_coefficient, 4)}</strong><small>C usado = {format_number(result.c_effective, 3)} · k = {format_number(result.height_k, 2)}</small></div>
     """
 
     order = list(reversed(range(len(load_levels))))
@@ -2139,15 +2405,16 @@ def add_load_level() -> None:
     global next_load_level_number
     if len(load_levels) >= 12:
         return
-    is_roof = True
-    for level in load_levels:
-        if not level.is_roof:
-            is_roof = False
-            break
-    load_levels.append(
+    insertion_index = (
+        len(load_levels) - 1
+        if load_levels and load_levels[-1].is_roof
+        else len(load_levels)
+    )
+    load_levels.insert(
+        insertion_index,
         LevelLoad(
             id=f"lv{next_load_level_number}",
-            label=f"Nivel {len(load_levels) + 1}",
+            label=f"Nivel {insertion_index + 1}",
             area=200.0,
             cm=6.5,
             cv=2.0,
@@ -2162,17 +2429,41 @@ def add_load_level() -> None:
 
 def apply_loads_to_analysis() -> None:
     """Copia el peso sísmico calculado hacia la Etapa 3 (Análisis)."""
-    global analysis_level_count, analysis_heights, analysis_forces
-    site = _build_site_params()
+    global analysis_level_count, analysis_heights, analysis_forces, analysis_alpha
+    global analysis_stiffness_x, analysis_stiffness_y
+    global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     try:
+        assessment = _current_irregularity_assessment()
+        site = _build_site_params(assessment)
         column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
         result = static_seismic_forces(load_levels, site, column_weights)
     except (ValueError, ZeroDivisionError):
         return
-    count = min(len(load_levels), 8)
+    count = min(len(load_levels), 12)
     analysis_level_count = count
     analysis_heights = [level.height for level in load_levels[:count]]
     analysis_forces = [result.level_forces[index] for index in range(count)]
+    analysis_stiffness_x = [
+        level.stiffness_x_override for level in load_levels[:count]
+    ]
+    analysis_stiffness_y = [
+        level.stiffness_y_override for level in load_levels[:count]
+    ]
+    level_rows = [column_takeoff_rows(level.height) for level in load_levels[:count]]
+    level_masses = [
+        _level_seismic_mass_properties(level, level_rows[index], loads_category)
+        for index, level in enumerate(load_levels[:count])
+    ]
+    total_mass = sum(item["mass"] for item in level_masses)
+    if total_mass > 0:
+        analysis_cm_x = sum(item["mass"] * item["center_x"] for item in level_masses) / total_mass
+        analysis_cm_y = sum(item["mass"] * item["center_y"] for item in level_masses) / total_mass
+    analysis_alpha = 0.0
+    average_plan_y = sum(
+        level_masses[index]["mass"] * load_levels[index].plan_y for index in range(count)
+    ) / total_mass if total_mass > 0 else load_levels[0].plan_y
+    analysis_ecc_x = 0.0
+    analysis_ecc_y = 0.05 * average_plan_y
     render_analysis_inputs()
     render_analysis_results()
     set_stage("analysis")
@@ -2243,12 +2534,17 @@ def set_stage(stage: str) -> None:
 
 def resize_analysis_levels(levels: int) -> None:
     global analysis_level_count, analysis_heights, analysis_forces
-    analysis_level_count = max(1, min(8, int(levels)))
+    global analysis_stiffness_x, analysis_stiffness_y
+    analysis_level_count = max(1, min(12, int(levels)))
     while len(analysis_heights) < analysis_level_count:
         analysis_heights.append(story_height)
         analysis_forces.append(100.0 * (len(analysis_forces) + 1))
+        analysis_stiffness_x.append(0.0)
+        analysis_stiffness_y.append(0.0)
     analysis_heights = analysis_heights[:analysis_level_count]
     analysis_forces = analysis_forces[:analysis_level_count]
+    analysis_stiffness_x = analysis_stiffness_x[:analysis_level_count]
+    analysis_stiffness_y = analysis_stiffness_y[:analysis_level_count]
     render_analysis_inputs()
     render_analysis_results()
 
@@ -2256,11 +2552,14 @@ def resize_analysis_levels(levels: int) -> None:
 def load_analysis_example() -> None:
     global units, groups, next_group_number, analysis_level_count
     global analysis_heights, analysis_forces, analysis_alpha
+    global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     units = "SI"
     analysis_level_count = 2
     analysis_heights = [3.0, 3.0]
     analysis_forces = [100.0, 200.0]
+    analysis_stiffness_x = [0.0, 0.0]
+    analysis_stiffness_y = [0.0, 0.0]
     analysis_alpha = 0.0
     analysis_cm_x, analysis_cm_y = 2.5, 2.0
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
@@ -2345,16 +2644,21 @@ def add_group() -> None:
 def reset() -> None:
     global units, story_height, groups, next_group_number, analysis_level_count
     global analysis_heights, analysis_forces, analysis_alpha
+    global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     global load_levels, next_load_level_number
     global loads_zone, loads_soil, loads_category, loads_system
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
+    global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
+    global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
     units = "SI"
     story_height = 3.0
     next_group_number = 2
     analysis_level_count = 2
     analysis_heights = [3.0, 3.0]
     analysis_forces = [100.0, 200.0]
+    analysis_stiffness_x = [0.0, 0.0]
+    analysis_stiffness_y = [0.0, 0.0]
     analysis_alpha = 0.0
     analysis_cm_x, analysis_cm_y = 2.5, 2.0
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
@@ -2366,6 +2670,11 @@ def reset() -> None:
     next_load_level_number = 3
     loads_zone, loads_soil, loads_category, loads_system = "3", "S2", "C", "muros"
     loads_ia, loads_ip = 1.0, 1.0
+    loads_discontinuity_vertical = False
+    loads_extreme_discontinuity_vertical = False
+    loads_reentrant_corners = False
+    loads_diaphragm_discontinuity = False
+    loads_nonparallel_systems = False
     loads_period_mode, loads_period_manual = "auto", 0.30
     by_id("story-height").value = "3"
     render_unit_toggle()
@@ -2432,6 +2741,7 @@ def handle_click(event):
             group.beta = 0.0 if group.direction == "X" else 90.0
             render_groups()
             render_results()
+            render_loads_results()
             render_analysis_results()
     elif action == "add-load-level":
         add_load_level()
@@ -2445,7 +2755,15 @@ def handle_click(event):
         level_id = str(action_element.getAttribute("data-id"))
         level = get_load_level(level_id)
         if level is not None:
-            level.is_roof = str(action_element.getAttribute("data-value")) == "true"
+            make_roof = str(action_element.getAttribute("data-value")) == "true"
+            if make_roof:
+                for other_level in load_levels:
+                    other_level.is_roof = False
+                level.is_roof = True
+                load_levels.remove(level)
+                load_levels.append(level)
+            else:
+                level.is_roof = False
             render_load_levels()
             render_loads_results()
     elif action == "apply-loads":
@@ -2495,16 +2813,6 @@ def handle_input(event):
         analysis_ecc_y = parse_number(target.value)
         render_analysis_results()
         return
-    if field == "loads-ia":
-        global loads_ia
-        loads_ia = parse_number(target.value, 1.0)
-        render_loads_results()
-        return
-    if field == "loads-ip":
-        global loads_ip
-        loads_ip = parse_number(target.value, 1.0)
-        render_loads_results()
-        return
     if field == "loads-period-manual":
         global loads_period_manual
         loads_period_manual = parse_number(target.value, 0.3)
@@ -2525,6 +2833,12 @@ def handle_input(event):
         "load-center-y",
         "load-beam-center-x",
         "load-beam-center-y",
+        "load-plan-x",
+        "load-plan-y",
+        "load-kx",
+        "load-ky",
+        "load-vnx",
+        "load-vny",
     ):
         level = get_load_level(str(target.getAttribute("data-level-id")))
         if level is None:
@@ -2547,6 +2861,12 @@ def handle_input(event):
                 "load-center-y": "center_y",
                 "load-beam-center-x": "beam_center_x",
                 "load-beam-center-y": "beam_center_y",
+                "load-plan-x": "plan_x",
+                "load-plan-y": "plan_y",
+                "load-kx": "stiffness_x_override",
+                "load-ky": "stiffness_y_override",
+                "load-vnx": "strength_x",
+                "load-vny": "strength_y",
             }[field]
             setattr(level, attribute, parse_number(target.value))
         render_loads_results()
@@ -2568,13 +2888,15 @@ def handle_input(event):
     elif field == "analysis-frame-beta":
         group.beta = parse_number(target.value)
     render_results()
-    if field in ("quantity", "dimension", "axis", "analysis-frame-x", "analysis-frame-y"):
+    if field in ("quantity", "dimension", "fc", "axis", "analysis-frame-x", "analysis-frame-y", "analysis-frame-beta"):
         render_loads_results()
     render_analysis_results()
 
 
 @when("change", "#calculator")
 def handle_change(event):
+    global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
+    global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
     target = event.target
     field = target.getAttribute("data-field")
     if field is None:
@@ -2619,6 +2941,26 @@ def handle_change(event):
         render_loads_site_inputs()
         render_loads_results()
         return
+    if field == "loads-discontinuity-vertical":
+        loads_discontinuity_vertical = bool(target.checked)
+        render_loads_results()
+        return
+    if field == "loads-extreme-discontinuity-vertical":
+        loads_extreme_discontinuity_vertical = bool(target.checked)
+        render_loads_results()
+        return
+    if field == "loads-reentrant-corners":
+        loads_reentrant_corners = bool(target.checked)
+        render_loads_results()
+        return
+    if field == "loads-diaphragm-discontinuity":
+        loads_diaphragm_discontinuity = bool(target.checked)
+        render_loads_results()
+        return
+    if field == "loads-nonparallel-systems":
+        loads_nonparallel_systems = bool(target.checked)
+        render_loads_results()
+        return
     if field == "load-preset":
         level = get_load_level(str(target.getAttribute("data-level-id")))
         preset_key = str(target.value)
@@ -2635,6 +2977,7 @@ def handle_change(event):
     setattr(group, field, str(target.value))
     render_groups()
     render_results()
+    render_loads_results()
     render_analysis_results()
 
 

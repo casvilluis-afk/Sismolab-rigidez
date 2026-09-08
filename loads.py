@@ -11,8 +11,8 @@ from math import isfinite
 from typing import Literal
 
 
-SoilProfile = Literal["S0", "S1", "S2", "S3", "S4", "S5"]
-UseCategory = Literal["A", "B", "C"]
+SoilProfile = Literal["S0", "S1", "S2", "S3", "S4"]
+UseCategory = Literal["A1", "A2", "B", "C"]
 StructuralSystem = Literal["porticos", "dual", "muros", "albanileria"]
 
 
@@ -36,6 +36,12 @@ class LevelLoad:
     center_y: float = 2.0  # m
     beam_center_x: float = 2.5  # m, centroide del grupo de vigas
     beam_center_y: float = 2.0  # m
+    plan_x: float = 5.0  # m, dimensión total/resistente del nivel en X
+    plan_y: float = 4.0  # m, dimensión total/resistente del nivel en Y
+    stiffness_x_override: float = 0.0  # kN/m; 0 usa la rigidez heredada
+    stiffness_y_override: float = 0.0  # kN/m; 0 usa la rigidez heredada
+    strength_x: float = 0.0  # kN; resistencia de entrepiso, 0 = no evaluada
+    strength_y: float = 0.0  # kN; resistencia de entrepiso, 0 = no evaluada
 
 
 # ---------------------------------------------------------------------------
@@ -65,19 +71,22 @@ def live_load_preset(key: str) -> float:
 # E.030 · Peso sísmico por nivel: P = CM + (%CV) * CV
 # ---------------------------------------------------------------------------
 CATEGORY_CV_FACTOR: dict[UseCategory, float] = {
-    "A": 0.5,
+    "A1": 0.5,
+    "A2": 0.5,
     "B": 0.5,
     "C": 0.25,
 }
 ROOF_CV_FACTOR = 0.25  # E.030: azoteas y techos en general, 25% de la S/C.
 
 CATEGORY_LABELS: dict[UseCategory, str] = {
-    "A": "A · Edificaciones esenciales",
+    "A1": "A₁ · Salud esencial sin aislamiento · U = 1,5",
+    "A2": "A₂ · Edificaciones esenciales · U = 1,5",
     "B": "B · Edificaciones importantes",
     "C": "C · Edificaciones comunes",
 }
 USE_FACTOR_U: dict[UseCategory, float] = {
-    "A": 1.5,
+    "A1": 1.5,
+    "A2": 1.5,
     "B": 1.3,
     "C": 1.0,
 }
@@ -193,10 +202,10 @@ ZONE_LABELS: dict[str, str] = {
 # E.030:2026, Tabla N° 4. Para S2 y S3 se usan los extremos más
 # desfavorables indicados por la norma cuando no se dispone de Vs30.
 SOIL_FACTORS: dict[str, dict[SoilProfile, float | None]] = {
-    "4": {"S0": 0.80, "S1": 1.00, "S2": 1.10, "S3": 1.20, "S4": None, "S5": None},
-    "3": {"S0": 0.80, "S1": 1.00, "S2": 1.15, "S3": 1.20, "S4": 1.30, "S5": None},
-    "2": {"S0": 0.80, "S1": 1.00, "S2": 1.30, "S3": 1.40, "S4": 1.70, "S5": None},
-    "1": {"S0": 0.80, "S1": 1.00, "S2": 1.30, "S3": 1.60, "S4": 2.40, "S5": None},
+    "4": {"S0": 0.80, "S1": 1.00, "S2": 1.10, "S3": 1.20, "S4": None},
+    "3": {"S0": 0.80, "S1": 1.00, "S2": 1.15, "S3": 1.20, "S4": 1.30},
+    "2": {"S0": 0.80, "S1": 1.00, "S2": 1.30, "S3": 1.40, "S4": 1.70},
+    "1": {"S0": 0.80, "S1": 1.00, "S2": 1.30, "S3": 1.60, "S4": 2.40},
 }
 
 # E.030:2026, Tabla N° 5. S2 y S3: valores conservadores sin Vs30.
@@ -213,7 +222,6 @@ SOIL_LABELS: dict[SoilProfile, str] = {
     "S2": "S2 · Suelos rígidos",
     "S3": "S3 · Suelos intermedios",
     "S4": "S4 · Suelos blandos",
-    "S5": "S5 · Suelos excepcionales",
 }
 
 BASIC_R: dict[StructuralSystem, float] = {
@@ -231,15 +239,13 @@ STRUCTURAL_SYSTEM_LABELS: dict[StructuralSystem, str] = {
 
 BASE_PERIOD_CT: dict[StructuralSystem, float] = {
     "porticos": 35.0,
-    "dual": 45.0,
+    "dual": 60.0,
     "muros": 60.0,
     "albanileria": 60.0,
 }
 
 
 def soil_factor_s(zone: str, soil: SoilProfile) -> float:
-    if soil == "S5":
-        raise ValueError("El perfil S5 requiere un estudio específico de sitio; no tiene parámetros tabulados.")
     value = SOIL_FACTORS.get(zone, SOIL_FACTORS["2"]).get(soil)
     if value is None:
         raise ValueError("El perfil S4 en la Zona 4 requiere un análisis de respuesta de sitio.")
@@ -247,8 +253,6 @@ def soil_factor_s(zone: str, soil: SoilProfile) -> float:
 
 
 def site_periods(soil: SoilProfile) -> tuple[float, float]:
-    if soil == "S5":
-        raise ValueError("El perfil S5 requiere un estudio específico de sitio.")
     return SOIL_PERIODS.get(soil, SOIL_PERIODS["S1"])
 
 
@@ -296,6 +300,7 @@ class SeismicDirectionResult:
     z: float
     u: float
     c: float
+    c_effective: float
     s: float
     r: float
     tp: float
@@ -315,10 +320,202 @@ class SeismicDirectionResult:
     height_k: float
 
 
+@dataclass
+class IrregularityFacts:
+    """Condiciones que requieren inspección geométrica o revisión del proyecto."""
+
+    discontinuity_vertical: bool = False
+    extreme_discontinuity_vertical: bool = False
+    reentrant_corners: bool = False
+    diaphragm_discontinuity: bool = False
+    nonparallel_systems: bool = False
+    torsional: bool = False
+    extreme_torsional: bool = False
+
+
+def _ratio(numerator: float, denominator: float) -> float | None:
+    numerator = float(numerator)
+    denominator = float(denominator)
+    if numerator < 0 or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def assess_irregularities(
+    levels: list[LevelLoad],
+    level_weights: list[float],
+    stiffness_x: list[float],
+    stiffness_y: list[float],
+    strength_x: list[float] | None = None,
+    strength_y: list[float] | None = None,
+    facts: IrregularityFacts | None = None,
+) -> dict[str, object]:
+    """Evalúa las Tablas 11 y 12 de la E.030:2026.
+
+    Los niveles se reciben de base a techo. La rigidez puede provenir del
+    modelo o de una sobreescritura por nivel. Una resistencia igual a cero se
+    interpreta como dato no disponible: el control de piso débil no se inventa
+    a partir de la demanda sísmica.
+    """
+
+    count = len(levels)
+    required = (level_weights, stiffness_x, stiffness_y)
+    if count == 0 or any(len(values) != count for values in required):
+        raise ValueError("Los datos de irregularidad deben corresponder a todos los niveles.")
+    strength_x = list(strength_x or [0.0] * count)
+    strength_y = list(strength_y or [0.0] * count)
+    if len(strength_x) != count or len(strength_y) != count:
+        raise ValueError("Debe existir un valor de resistencia para cada nivel.")
+    facts = facts or IrregularityFacts()
+
+    rows: list[dict[str, object]] = []
+    flags: dict[str, set[str]] = {
+        "soft_story": set(),
+        "extreme_soft_story": set(),
+        "weak_story": set(),
+        "extreme_weak_story": set(),
+        "mass": set(),
+        "geometric_vertical": set(),
+    }
+    direction_data = {
+        "X": (list(map(float, stiffness_x)), list(map(float, strength_x))),
+        "Y": (list(map(float, stiffness_y)), list(map(float, strength_y))),
+    }
+
+    for index, level in enumerate(levels):
+        row: dict[str, object] = {
+            "level": index + 1,
+            "label": level.label,
+            "kx": float(stiffness_x[index]),
+            "ky": float(stiffness_y[index]),
+            "weight": float(level_weights[index]),
+            "plan_x": float(level.plan_x),
+            "plan_y": float(level.plan_y),
+        }
+        for direction, (stiffnesses, strengths) in direction_data.items():
+            adjacent = None
+            upper_average = None
+            weak_ratio = None
+            if index + 1 < count:
+                adjacent = _ratio(stiffnesses[index], stiffnesses[index + 1])
+                if strengths[index] > 0 and strengths[index + 1] > 0:
+                    weak_ratio = _ratio(strengths[index], strengths[index + 1])
+            if index + 3 < count:
+                upper_values = stiffnesses[index + 1 : index + 4]
+                if all(value > 0 for value in upper_values):
+                    upper_average = _ratio(stiffnesses[index], sum(upper_values) / 3.0)
+
+            label = f"N{index + 1}/{direction}"
+            is_extreme_soft = (
+                (adjacent is not None and adjacent < 0.60)
+                or (upper_average is not None and upper_average < 0.70)
+            )
+            is_soft = (
+                (adjacent is not None and adjacent < 0.70)
+                or (upper_average is not None and upper_average < 0.80)
+            )
+            if is_soft:
+                flags["soft_story"].add(label)
+            if is_extreme_soft:
+                flags["extreme_soft_story"].add(label)
+            if weak_ratio is not None and weak_ratio < 0.80:
+                flags["weak_story"].add(label)
+            if weak_ratio is not None and weak_ratio < 0.65:
+                flags["extreme_weak_story"].add(label)
+
+            key = direction.lower()
+            row[f"k_adjacent_{key}"] = adjacent
+            row[f"k_average3_{key}"] = upper_average
+            row[f"strength_ratio_{key}"] = weak_ratio
+        rows.append(row)
+
+    # Masa y geometría: se comparan pisos adyacentes en ambos sentidos. La
+    # E.030 excluye expresamente azoteas y sótanos; este modelo no crea sótanos.
+    for index, level in enumerate(levels):
+        if level.is_roof:
+            continue
+        for adjacent_index in (index - 1, index + 1):
+            if not 0 <= adjacent_index < count or levels[adjacent_index].is_roof:
+                continue
+            if float(level_weights[index]) > 1.5 * float(level_weights[adjacent_index]):
+                flags["mass"].add(f"N{index + 1}")
+            for direction, current, adjacent_value in (
+                ("X", float(level.plan_x), float(levels[adjacent_index].plan_x)),
+                ("Y", float(level.plan_y), float(levels[adjacent_index].plan_y)),
+            ):
+                if adjacent_value > 0 and current > 1.3 * adjacent_value:
+                    flags["geometric_vertical"].add(f"N{index + 1}/{direction}")
+
+    def detail(name: str, fallback: str) -> str:
+        affected = sorted(flags.get(name, set()))
+        return ", ".join(affected) if affected else fallback
+
+    checks = [
+        {"key": "soft_story", "group": "height", "name": "Rigidez - piso blando", "factor": 0.75, "active": bool(flags["soft_story"]), "detail": detail("soft_story", "K ≥ 70% del piso superior y ≥ 80% del promedio de 3 superiores")},
+        {"key": "extreme_soft_story", "group": "height", "name": "Rigidez extrema", "factor": 0.50, "active": bool(flags["extreme_soft_story"]), "detail": detail("extreme_soft_story", "K ≥ 60% del piso superior y ≥ 70% del promedio de 3 superiores")},
+        {"key": "weak_story", "group": "height", "name": "Resistencia - piso débil", "factor": 0.75, "active": bool(flags["weak_story"]), "detail": detail("weak_story", "Requiere Vn por nivel; 0 = no evaluado")},
+        {"key": "extreme_weak_story", "group": "height", "name": "Resistencia extrema", "factor": 0.50, "active": bool(flags["extreme_weak_story"]), "detail": detail("extreme_weak_story", "Requiere Vn por nivel; límite 65%")},
+        {"key": "mass", "group": "height", "name": "Masa o peso", "factor": 0.90, "active": bool(flags["mass"]), "detail": detail("mass", "Piso ≤ 1,5 veces cada piso adyacente")},
+        {"key": "geometric_vertical", "group": "height", "name": "Geometría vertical", "factor": 0.90, "active": bool(flags["geometric_vertical"]), "detail": detail("geometric_vertical", "Dimensión resistente ≤ 1,3 veces la adyacente")},
+        {"key": "discontinuity_vertical", "group": "height", "name": "Discontinuidad vertical", "factor": 0.80, "active": bool(facts.discontinuity_vertical), "detail": "Dato de inspección del sistema resistente"},
+        {"key": "extreme_discontinuity_vertical", "group": "height", "name": "Discontinuidad vertical extrema", "factor": 0.60, "active": bool(facts.extreme_discontinuity_vertical), "detail": "Elementos discontinuos resisten más de 25% del cortante"},
+        {"key": "torsional", "group": "plan", "name": "Torsional", "factor": 0.75, "active": bool(facts.torsional), "detail": "Δmax/Δprom > 1,3, con excentricidad accidental"},
+        {"key": "extreme_torsional", "group": "plan", "name": "Torsional extrema", "factor": 0.60, "active": bool(facts.extreme_torsional), "detail": "Δmax/Δprom > 1,5, con excentricidad accidental"},
+        {"key": "reentrant_corners", "group": "plan", "name": "Esquinas entrantes", "factor": 0.90, "active": bool(facts.reentrant_corners), "detail": "Entrantes mayores que 20% en ambas direcciones"},
+        {"key": "diaphragm_discontinuity", "group": "plan", "name": "Discontinuidad del diafragma", "factor": 0.85, "active": bool(facts.diaphragm_discontinuity), "detail": "Aberturas > 50% o sección neta resistente < 50%"},
+        {"key": "nonparallel_systems", "group": "plan", "name": "Sistemas no paralelos", "factor": 0.90, "active": bool(facts.nonparallel_systems), "detail": "Revisar excepciones de 30° y 10% del cortante"},
+    ]
+    height_factors = [float(item["factor"]) for item in checks if item["group"] == "height" and item["active"]]
+    plan_factors = [float(item["factor"]) for item in checks if item["group"] == "plan" and item["active"]]
+    extreme_keys = {"extreme_soft_story", "extreme_weak_story", "extreme_discontinuity_vertical", "extreme_torsional"}
+    return {
+        "ia": min(height_factors, default=1.0),
+        "ip": min(plan_factors, default=1.0),
+        "extreme": any(item["active"] and item["key"] in extreme_keys for item in checks),
+        "checks": checks,
+        "rows": rows,
+    }
+
+
+def irregularity_restriction(
+    category: UseCategory,
+    zone: str,
+    levels: int,
+    total_height: float,
+    assessment: dict[str, object],
+) -> tuple[str, str]:
+    """Resume las restricciones de la Tabla 13 de la E.030:2026."""
+
+    irregular = float(assessment["ia"]) < 1.0 or float(assessment["ip"]) < 1.0
+    extreme = bool(assessment["extreme"])
+    if category in {"A1", "A2"}:
+        prohibited = irregular if zone in {"2", "3", "4"} else extreme
+        rule = "no se permiten irregularidades" if zone in {"2", "3", "4"} else "no se permiten irregularidades extremas"
+    elif category == "B":
+        prohibited = extreme and zone in {"2", "3", "4"}
+        rule = "no se permiten irregularidades extremas" if zone in {"2", "3", "4"} else "sin restricciones por Tabla 13"
+    elif zone in {"3", "4"}:
+        prohibited = extreme
+        rule = "no se permiten irregularidades extremas"
+    elif zone == "2":
+        exception = levels <= 2 or total_height <= 8.0
+        prohibited = extreme and not exception
+        rule = "las extremas sólo se admiten hasta 2 pisos u 8 m de altura"
+    else:
+        prohibited = False
+        rule = "sin restricciones por Tabla 13"
+    if prohibited:
+        return "not_allowed", f"Configuración no permitida: {rule}."
+    if irregular:
+        return "review", f"Configuración irregular compatible con esta revisión: {rule}."
+    return "ok", f"Configuración regular: {rule}."
+
+
 def static_seismic_forces(
     levels: list[LevelLoad],
     site: SeismicSiteParams,
     column_weights_kn: list[float] | None = None,
+    enforce_minimum_c_over_r: bool = True,
 ) -> SeismicDirectionResult:
     """Calcula V y la distribución Fi por nivel (E.030, método estático)."""
 
@@ -343,24 +540,68 @@ def static_seismic_forces(
             level.center_y,
             level.beam_center_x,
             level.beam_center_y,
+            level.plan_x,
+            level.plan_y,
+            level.stiffness_x_override,
+            level.stiffness_y_override,
+            level.strength_x,
+            level.strength_y,
         )
         if not all(isfinite(float(value)) for value in numeric_values):
             raise ValueError(f"Los datos geométricos del nivel {index + 1} deben ser números válidos.")
-        if min(level.cm, level.cv, level.beam_count, level.beam_width, level.beam_depth, level.beam_length, level.slab_thickness) < 0:
+        if min(
+            level.cm,
+            level.cv,
+            level.beam_count,
+            level.beam_width,
+            level.beam_depth,
+            level.beam_length,
+            level.slab_thickness,
+            level.stiffness_x_override,
+            level.stiffness_y_override,
+            level.strength_x,
+            level.strength_y,
+        ) < 0:
             raise ValueError(f"Las cargas y dimensiones del nivel {index + 1} no pueden ser negativas.")
+        if level.plan_x <= 0 or level.plan_y <= 0:
+            raise ValueError(f"Las dimensiones de planta del nivel {index + 1} deben ser mayores que cero.")
         slab_load = level.slab_thickness * CONCRETE_UNIT_WEIGHT
         if level.cm + 1e-9 < slab_load:
             raise ValueError(
                 f"En el nivel {index + 1}, CM debe ser al menos {slab_load:.2f} kN/m² "
                 "para incluir el peso de la losa ingresada."
             )
+    roof_indices = [index for index, level in enumerate(levels) if level.is_roof]
+    if len(roof_indices) > 1:
+        raise ValueError("Sólo un nivel puede definirse como techo o azotea.")
+    if roof_indices and roof_indices[0] != len(levels) - 1:
+        raise ValueError("El techo o azotea debe ser el último nivel del modelo.")
+
+    if site.category == "A1":
+        if site.zone in {"3", "4"}:
+            raise ValueError(
+                "La categoría A₁ en zonas 3 y 4 requiere aislamiento sísmico; "
+                "ese sistema se diseña con la E.031 y no está incluido en esta página."
+            )
+        if site.system == "porticos":
+            raise ValueError(
+                "Para categoría A₁ en zonas 1 y 2, la Tabla 9 no admite pórticos "
+                "de concreto como sistema único."
+            )
+    if site.category == "A2" and site.zone in {"2", "3", "4"} and site.system == "porticos":
+        raise ValueError(
+            "Para categoría A₂ en zonas 2, 3 y 4, la Tabla 9 no admite pórticos "
+            "de concreto como sistema único."
+        )
 
     z = ZONE_FACTORS.get(site.zone, ZONE_FACTORS["2"])
     u = USE_FACTOR_U.get(site.category, 1.0)
     s = soil_factor_s(site.zone, site.soil)
     tp, tl = site_periods(site.soil)
     r0 = BASIC_R.get(site.system, 6.0)
-    r = max(r0 * site.irregularity_height * site.irregularity_plan, 1.0)
+    r = r0 * site.irregularity_height * site.irregularity_plan
+    if r <= 0:
+        raise ValueError("El coeficiente de reducción R debe ser mayor que cero.")
 
     cumulative_height = 0.0
     heights: list[float] = []
@@ -379,7 +620,7 @@ def static_seismic_forces(
     # en todo el intervalo 0 <= T <= TP (artículo 18.3 y artículo 34).
     c = 2.5 if period <= tp else amplification_factor_c(period, tp, tl)
     # C/R no debe ser menor que 0,11 (E.030:2026, artículo 34.2).
-    c_effective = max(c, 0.11 * r)
+    c_effective = max(c, 0.11 * r) if enforce_minimum_c_over_r else c
     coefficient = (z * u * c_effective * s) / r
 
     breakdowns = [
@@ -403,6 +644,7 @@ def static_seismic_forces(
         z=z,
         u=u,
         c=c,
+        c_effective=c_effective,
         s=s,
         r=r,
         tp=tp,
