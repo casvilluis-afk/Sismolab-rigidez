@@ -105,7 +105,8 @@ def format_number(value: float, digits: int = 2) -> str:
 
 
 def input_number(value: float, digits: int = 6) -> str:
-    return f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
+    rendered = f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
+    return rendered or "0"
 
 
 def parse_number(value, fallback: float = 0.0) -> float:
