@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Herramienta educativa en Python para rigidez lateral y análisis pseudotridimensional de edificios." />
+    <meta name="description" content="Herramienta educativa para rigidez lateral, metrado de cargas y análisis pseudotridimensional de edificios." />
     <title>SismoLab · Rigidez y análisis estructural</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
@@ -19,7 +19,6 @@
             <span><strong>SismoLab</strong><small>Herramientas estructurales</small></span>
           </a>
           <div class="header-actions">
-            <span class="python-status" id="python-status" hidden><i></i> Iniciando Python…</span>
             <button class="button button-ghost" type="button" data-action="reset">↻ Reiniciar</button>
           </div>
         </div>
@@ -30,7 +29,7 @@
           <div>
             <p id="intro-eyebrow" class="eyebrow">RIGIDEZ LATERAL · MODELO DE CORTE</p>
             <h1 id="intro-title">Rigidez lateral del entrepiso</h1>
-            <p id="intro-copy" class="intro-copy">Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
+            <p id="intro-copy" class="intro-copy">Calcula el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
           </div>
           <div class="model-note">
             <span aria-hidden="true">i</span>
@@ -86,7 +85,7 @@
           </div>
 
           <div id="group-list" class="group-list">
-            <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora en Python…</strong></div>
+            <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
           </div>
           <button id="add-group" type="button" class="button add-group" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
         </section>
@@ -176,7 +175,7 @@
           <div>
             <p class="eyebrow">ETAPA 2 · METRADO DE CARGAS</p>
             <h2 id="loads-heading">Peso sísmico y fuerza estática por nivel</h2>
-            <p>Define las cargas gravitacionales (E.020) de cada nivel y los parámetros de sitio para que Python calcule el peso sísmico y la fuerza estática de cada piso (E.030).</p>
+            <p>Define las cargas gravitacionales (E.020) de cada nivel y los parámetros de sitio para calcular el peso sísmico y la fuerza estática de cada piso (E.030).</p>
           </div>
         </div>
 
@@ -205,11 +204,14 @@
               <div class="field-block">
                 <label for="loads-soil">Perfil de suelo</label>
                 <select id="loads-soil" data-field="loads-soil">
-                  <option value="S0">S0 · Roca dura</option>
-                  <option value="S1">S1 · Roca / muy rígido</option>
-                  <option value="S2" selected>S2 · Intermedio</option>
-                  <option value="S3">S3 · Blando</option>
+                  <option value="S0">S0 · Roca</option>
+                  <option value="S1">S1 · Suelos muy rígidos</option>
+                  <option value="S2" selected>S2 · Suelos rígidos</option>
+                  <option value="S3">S3 · Suelos intermedios</option>
+                  <option value="S4">S4 · Suelos blandos</option>
+                  <option value="S5">S5 · Suelos excepcionales</option>
                 </select>
+                <small>S0–S4 usan los parámetros de la E.030:2026. S5 exige un estudio específico de sitio.</small>
               </div>
               <div class="field-block">
                 <label for="loads-category">Categoría</label>
@@ -217,7 +219,6 @@
                   <option value="A">A · Esencial (U=1,5)</option>
                   <option value="B">B · Importante (U=1,3)</option>
                   <option value="C" selected>C · Común (U=1,0)</option>
-                  <option value="D">D · Menor (U=1,0)</option>
                 </select>
               </div>
               <div class="field-block">
@@ -268,7 +269,7 @@
               </div>
               <div id="loads-warning" class="analysis-warning" hidden></div>
               <div id="loads-summary" class="analysis-summary"></div>
-              <div class="formula-bar"><b>Σ</b><span>P = CM + %CV · CV por nivel · V = (Z·U·C·S/R)·ΣP</span></div>
+              <div class="formula-bar"><b>Σ</b><span>P = CM superficial + columnas + vigas + %CV · CV · V = (Z·U·C·S/R)·ΣP</span></div>
             </div>
 
             <div class="analysis-plan-card">
@@ -294,7 +295,7 @@
 
         <div class="analysis-scope">
           <strong>Alcance de esta etapa</strong>
-          <p>Metrado simplificado con áreas tributarias por nivel y método estático equivalente de la E.030. No reemplaza un metrado detallado elemento por elemento ni el análisis dinámico modal espectral cuando la norma lo exige.</p>
+          <p>Metrado preliminar por nivel: incorpora las columnas definidas en Rigidez, una sección típica de vigas por nivel y las cargas superficiales de losa, acabados y tabiquería. No reemplaza un metrado estructural completo ni el análisis dinámico modal espectral cuando la norma lo exige.</p>
         </div>
       </section>
 
@@ -310,7 +311,7 @@
 
         <div class="analysis-bridge" role="note">
           <span aria-hidden="true">2 → 3</span>
-          <div><strong>¿Qué cambió?</strong><p>En Metrado obtuviste la fuerza sísmica de cada nivel. Aquí ubicas los ejes resistentes en el plano y Python calcula cómo se mueve el edificio completo bajo esas fuerzas.</p></div>
+          <div><strong>¿Qué cambió?</strong><p>En Metrado obtuviste la fuerza sísmica de cada nivel. Aquí ubicas los ejes resistentes en el plano y se calcula cómo se mueve el edificio completo bajo esas fuerzas.</p></div>
         </div>
 
         <div class="analysis-workspace">
@@ -427,7 +428,7 @@
         </div>
 
         <section class="analysis-method" aria-labelledby="analysis-method-heading">
-          <div class="theory-title"><span aria-hidden="true">∑</span><div><p class="eyebrow">CÓMO SE CONECTAN LAS DOS ETAPAS</p><h2 id="analysis-method-heading">Ruta matricial que ejecuta Python</h2></div></div>
+          <div class="theory-title"><span aria-hidden="true">∑</span><div><p class="eyebrow">CÓMO SE CONECTAN LAS ETAPAS</p><h2 id="analysis-method-heading">Ruta matricial del análisis</h2></div></div>
           <div class="analysis-method-grid">
             <article><span>01</span><h3>Matriz de cada eje</h3><p>Las rigideces de los pisos forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></article>
             <article><span>02</span><h3>Posición y orientación</h3><p>G relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo perpendicular r.</p></article>
@@ -441,7 +442,7 @@
         </div>
       </section>
 
-      <footer><div class="page-shell"><span>SismoLab · Desarrollo progresivo para análisis sísmico E.030</span><span>Motor de cálculo Python · columnas cuadradas y circulares</span></div></footer>
+      <footer><div class="page-shell"><span>SismoLab · Desarrollo progresivo para análisis sísmico E.030</span><span>Rigidez · metrado · análisis estructural</span></div></footer>
     </main>
     <script type="py" src="./app.py" config="./pyscript.toml"></script>
   </body>

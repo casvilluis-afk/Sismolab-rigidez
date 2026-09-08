@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from html import escape
-from math import cos, isfinite, radians, sin
+from math import cos, isfinite, pi, radians, sin
 
 from pyscript import document, when
 
@@ -29,6 +29,7 @@ from loads import (
     LIVE_LOAD_PRESETS,
     LevelLoad,
     SeismicSiteParams,
+    beam_takeoff,
     live_load_preset,
     static_seismic_forces,
 )
@@ -115,6 +116,36 @@ def get_group(group_id: str) -> ColumnGroup | None:
 
 def get_load_level(level_id: str) -> LevelLoad | None:
     return next((level for level in load_levels if level.id == level_id), None)
+
+
+def column_takeoff(story_height_m: float) -> dict[str, float | int]:
+    """Metrado de las columnas definidas en Rigidez para un entrepiso."""
+
+    total_count = 0
+    total_volume = 0.0
+    total_weight = 0.0
+    for group in groups:
+        dimension_m = group.dimension / (1_000.0 if units == "SI" else 100.0)
+        section_area = (
+            dimension_m**2
+            if group.shape == "square"
+            else pi * dimension_m**2 / 4.0
+        )
+        quantity = max(0, int(group.quantity))
+        volume = quantity * section_area * max(0.0, story_height_m)
+        unit_weight = 24.0 if group.material == "concrete" else 78.5
+        total_count += quantity
+        total_volume += volume
+        total_weight += volume * unit_weight
+    return {
+        "count": total_count,
+        "volume": total_volume,
+        "weight": total_weight,
+    }
+
+
+def column_takeoffs_for_levels() -> list[dict[str, float | int]]:
+    return [column_takeoff(level.height) for level in load_levels]
 
 
 def shape_name(shape: str) -> str:
@@ -1688,8 +1719,10 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         f'<option value="{key}">{escape(label)}</option>' for key, (label, _value) in LIVE_LOAD_PRESETS.items()
     )
     label_value = escape(str(level.label), quote=True)
+    columns = column_takeoff(level.height)
+    beam_volume, beam_weight = beam_takeoff(level)
     return f"""
-    <article class="column-card" data-card-id="{level.id}">
+    <article class="column-card load-level-card" data-card-id="{level.id}">
       <div class="column-card__head">
         <div><span class="column-code">N{index + 1}</span><div><h3>Nivel {index + 1}</h3><p>{"Techo / azotea" if level.is_roof else "Piso"}</p></div></div>
         {remove_button}
@@ -1701,7 +1734,7 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         </div>
         <fieldset class="field-block shape-field">
           <legend>Tipo</legend>
-          <div class="shape-options">
+          <div class="shape-options load-type-options">
             <button type="button" class="shape-option{floor_selected}" data-action="load-roof" data-id="{level.id}" data-value="false">Piso</button>
             <button type="button" class="shape-option{roof_selected}" data-action="load-roof" data-id="{level.id}" data-value="true">Techo</button>
           </div>
@@ -1721,7 +1754,7 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         <div class="field-block">
           <label for="load-cm-{level.id}">Carga muerta CM</label>
           <div class="input-with-unit"><input id="load-cm-{level.id}" type="number" min="0" step="0.1" value="{input_number(level.cm)}" data-level-id="{level.id}" data-field="load-cm" /><span>kN/m²</span></div>
-          <small>Peso propio de losa + acabados + tabiquería.</small>
+          <small>Losa + acabados + tabiquería. No incluyas aquí columnas ni vigas.</small>
         </div>
         <div class="field-block">
           <label for="load-cv-{level.id}">Sobrecarga CV</label>
@@ -1736,6 +1769,24 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         </select>
         <small>Al elegir un uso se llena el campo CV; puedes seguir editándolo a mano.</small>
       </div>
+
+      <section class="element-takeoff-card" aria-labelledby="takeoff-{level.id}">
+        <div class="element-takeoff-head">
+          <div><span aria-hidden="true">▦</span><div><strong id="takeoff-{level.id}">Metrado de elementos</strong><small>Se suma a la carga muerta superficial</small></div></div>
+          <span>γ vigas = 24 kN/m³</span>
+        </div>
+        <div class="column-takeoff-summary">
+          <div><strong>Columnas heredadas de Rigidez</strong><small>Considera todos los grupos definidos en la Etapa 1.</small></div>
+          <output id="load-columns-summary-{level.id}">{columns['count']} unid. · {format_number(columns['volume'], 3)} m³ · {format_number(columns['weight'], 1)} kN</output>
+        </div>
+        <div class="beam-takeoff-fields">
+          <div class="field-block"><label for="load-beam-count-{level.id}">Cantidad de vigas</label><input id="load-beam-count-{level.id}" type="number" min="0" step="1" value="{level.beam_count}" data-level-id="{level.id}" data-field="load-beam-count" /></div>
+          <div class="field-block"><label for="load-beam-width-{level.id}">Ancho b</label><div class="input-with-unit"><input id="load-beam-width-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_width)}" data-level-id="{level.id}" data-field="load-beam-width" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-depth-{level.id}">Peralte h</label><div class="input-with-unit"><input id="load-beam-depth-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_depth)}" data-level-id="{level.id}" data-field="load-beam-depth" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-length-{level.id}">Longitud por viga</label><div class="input-with-unit"><input id="load-beam-length-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.beam_length)}" data-level-id="{level.id}" data-field="load-beam-length" /><span>m</span></div></div>
+        </div>
+        <p class="element-takeoff-result">Vigas del nivel: <strong id="load-beams-summary-{level.id}">{level.beam_count} unid. · {format_number(beam_volume, 3)} m³ · {format_number(beam_weight, 1)} kN</strong></p>
+      </section>
     </article>
     """
 
@@ -1775,8 +1826,7 @@ def _build_site_params() -> SeismicSiteParams:
 
 
 def _loads_steps_html(result, site: SeismicSiteParams) -> str:
-    roof_note = " · con fuerza adicional en la azotea (T &gt; 0,7 s)" if result.period > 0.7 else ""
-    cv_pct = CATEGORY_CV_FACTOR.get(site.category, 0.5) * 100.0
+    cv_pct = CATEGORY_CV_FACTOR.get(site.category, 0.25) * 100.0
     return f"""
       <div class="step-block">
         <h4><span class="step-badge">1</span>Parámetros de sitio (E.030)</h4>
@@ -1785,7 +1835,7 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
       </div>
       <div class="step-block">
         <h4><span class="step-badge">2</span>Peso sísmico por nivel</h4>
-        <p><code>P = CM·A + %CV·CV·A</code>, con %CV = 25% en techos y {format_number(cv_pct, 0)}% en el resto de niveles (categoría {escape(site.category)}).</p>
+        <p><code>P = CM·A + W_columnas + W_vigas + %CV·CV·A</code>, con %CV = 25% en techos y {format_number(cv_pct, 0)}% en el resto de niveles (categoría {escape(site.category)}).</p>
       </div>
       <div class="step-block">
         <h4><span class="step-badge">3</span>Cortante en la base</h4>
@@ -1793,7 +1843,7 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
       </div>
       <div class="step-block">
         <h4><span class="step-badge">4</span>Distribución en altura</h4>
-        <p><code>F_i = V · (P_i · h_i^k) / Σ(P_j · h_j^k)</code>, k = {format_number(result.height_k, 2)}{roof_note}</p>
+        <p><code>F_i = V · (P_i · h_i^k) / Σ(P_j · h_j^k)</code>, k = {format_number(result.height_k, 2)}</p>
       </div>
     """
 
@@ -1801,10 +1851,26 @@ def _loads_steps_html(result, site: SeismicSiteParams) -> str:
 def render_loads_results() -> None:
     warning = by_id("loads-warning")
     site = _build_site_params()
+    column_takeoffs = column_takeoffs_for_levels()
+    column_weights = [float(item["weight"]) for item in column_takeoffs]
+    for level, takeoff in zip(load_levels, column_takeoffs):
+        column_summary = by_id(f"load-columns-summary-{level.id}")
+        if column_summary is not None:
+            column_summary.textContent = (
+                f"{takeoff['count']} unid. · {format_number(takeoff['volume'], 3)} m³ · "
+                f"{format_number(takeoff['weight'], 1)} kN"
+            )
+        beam_summary = by_id(f"load-beams-summary-{level.id}")
+        if beam_summary is not None:
+            beam_volume, beam_weight = beam_takeoff(level)
+            beam_summary.textContent = (
+                f"{level.beam_count} unid. · {format_number(beam_volume, 3)} m³ · "
+                f"{format_number(beam_weight, 1)} kN"
+            )
     try:
         if not load_levels:
             raise ValueError("Agrega al menos un nivel para calcular el metrado.")
-        result = static_seismic_forces(load_levels, site)
+        result = static_seismic_forces(load_levels, site, column_weights)
     except (ValueError, ZeroDivisionError) as error:
         warning.hidden = False
         warning.textContent = str(error)
@@ -1835,20 +1901,31 @@ def render_loads_results() -> None:
     force_rows = [(f"Nivel {index + 1}", result.level_forces[index]) for index in order]
     by_id("loads-force-chart").innerHTML = _bar_chart_svg(force_rows, "kN", "chart-bar-teal")
 
-    table_rows = []
+    seismic_rows = []
+    element_rows = []
     cumulative_shear = 0.0
     for index in order:
         level = load_levels[index]
         cumulative_shear += result.level_forces[index]
-        table_rows.append(
+        element_rows.append(
+            f"<tr><td>{escape(str(level.label))}</td><td>{column_takeoffs[index]['count']}</td>"
+            f"<td>{format_number(column_takeoffs[index]['volume'], 3)}</td><td>{format_number(result.level_column_weights[index], 1)}</td>"
+            f"<td>{level.beam_count}</td><td>{format_number(result.level_beam_volumes[index], 3)}</td>"
+            f"<td>{format_number(result.level_beam_weights[index], 1)}</td><td>{format_number(result.level_surface_dead_loads[index], 1)}</td>"
+            f"<td>{format_number(result.level_dead_loads[index], 1)}</td></tr>"
+        )
+        seismic_rows.append(
             f"<tr><td>{escape(str(level.label))}</td><td>{format_number(level.area, 1)}</td>"
             f"<td>{format_number(result.level_weights[index], 1)}</td><td>{format_number(result.level_forces[index], 1)}</td>"
             f"<td>{format_number(cumulative_shear, 1)}</td></tr>"
         )
     by_id("loads-table").innerHTML = f"""
-      <h3>Metrado por nivel</h3>
+      <h3>Metrado de elementos estructurales</h3>
+      <p>Las columnas proceden de los grupos definidos en Rigidez. Las vigas usan las dimensiones y cantidades ingresadas en cada nivel.</p>
+      <div class="table-scroll"><table class="data-table element-takeoff-table"><thead><tr><th>Nivel</th><th>N° col.</th><th>Vol. col. (m³)</th><th>W col. (kN)</th><th>N° vigas</th><th>Vol. vigas (m³)</th><th>W vigas (kN)</th><th>CM superficial (kN)</th><th>CM total (kN)</th></tr></thead><tbody>{"".join(element_rows)}</tbody></table></div>
+      <h3 class="secondary-table-title">Resumen sísmico por nivel</h3>
       <p>El cortante acumulado se calcula de techo a base, igual que la fuerza sísmica que usará la Etapa 3.</p>
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>Área (m²)</th><th>P (kN)</th><th>F (kN)</th><th>V acumulado (kN)</th></tr></thead><tbody>{"".join(table_rows)}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>Área (m²)</th><th>P (kN)</th><th>F (kN)</th><th>V acumulado (kN)</th></tr></thead><tbody>{"".join(seismic_rows)}</tbody></table></div>
     """
 
     _update_details_panel("loads-steps", ".steps-card", _loads_steps_html(result, site))
@@ -1884,7 +1961,8 @@ def apply_loads_to_analysis() -> None:
     global analysis_level_count, analysis_heights, analysis_forces
     site = _build_site_params()
     try:
-        result = static_seismic_forces(load_levels, site)
+        column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
+        result = static_seismic_forces(load_levels, site, column_weights)
     except (ValueError, ZeroDivisionError):
         return
     count = min(len(load_levels), 8)
@@ -1901,7 +1979,7 @@ STAGE_INTRO = {
         "title": "SismoLab · Rigidez lateral",
         "eyebrow": "RIGIDEZ LATERAL · MODELO DE CORTE",
         "heading": "Rigidez lateral del entrepiso",
-        "copy": "Calcula con Python el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.",
+        "copy": "Calcula el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.",
         "note_title": "Hipótesis principal",
         "note_copy": "Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.",
     },
@@ -2026,6 +2104,7 @@ def change_units(target: str) -> None:
     render_unit_toggle()
     render_groups()
     render_results()
+    render_loads_results()
     render_analysis_results()
 
 
@@ -2054,6 +2133,7 @@ def add_group() -> None:
     next_group_number += 1
     render_groups()
     render_results()
+    render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
 
@@ -2119,6 +2199,7 @@ def handle_click(event):
             groups[:] = [group for group in groups if group.id != group_id]
             render_groups()
             render_results()
+            render_loads_results()
             render_analysis_inputs()
             render_analysis_results()
     elif action == "shape":
@@ -2128,6 +2209,7 @@ def handle_click(event):
             group.shape = str(action_element.getAttribute("data-value"))
             render_groups()
             render_results()
+            render_loads_results()
             render_analysis_results()
     elif action == "material":
         group_id = str(action_element.getAttribute("data-id"))
@@ -2136,6 +2218,7 @@ def handle_click(event):
             group.material = str(action_element.getAttribute("data-value"))
             render_groups()
             render_results()
+            render_loads_results()
             render_analysis_results()
     elif action == "direction":
         group_id = str(action_element.getAttribute("data-id"))
@@ -2223,14 +2306,34 @@ def handle_input(event):
         loads_period_manual = parse_number(target.value, 0.3)
         render_loads_results()
         return
-    if field in ("load-area", "load-cm", "load-cv", "load-height", "load-label"):
+    if field in (
+        "load-area",
+        "load-cm",
+        "load-cv",
+        "load-height",
+        "load-label",
+        "load-beam-count",
+        "load-beam-width",
+        "load-beam-depth",
+        "load-beam-length",
+    ):
         level = get_load_level(str(target.getAttribute("data-level-id")))
         if level is None:
             return
         if field == "load-label":
             level.label = str(target.value)[:24]
+        elif field == "load-beam-count":
+            level.beam_count = max(0, int(parse_number(target.value)))
         else:
-            attribute = {"load-area": "area", "load-cm": "cm", "load-cv": "cv", "load-height": "height"}[field]
+            attribute = {
+                "load-area": "area",
+                "load-cm": "cm",
+                "load-cv": "cv",
+                "load-height": "height",
+                "load-beam-width": "beam_width",
+                "load-beam-depth": "beam_depth",
+                "load-beam-length": "beam_length",
+            }[field]
             setattr(level, attribute, parse_number(target.value))
         render_loads_results()
         return
@@ -2251,6 +2354,8 @@ def handle_input(event):
     elif field == "analysis-frame-beta":
         group.beta = parse_number(target.value)
     render_results()
+    if field in ("quantity", "dimension"):
+        render_loads_results()
     render_analysis_results()
 
 
@@ -2328,9 +2433,6 @@ def initialize() -> None:
     render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
-    status = by_id("python-status")
-    status.classList.add("is-ready")
-    status.innerHTML = "<i></i> Motor Python activo"
     by_id("calculator").setAttribute("aria-busy", "false")
 
 
