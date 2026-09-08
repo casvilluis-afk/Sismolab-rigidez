@@ -14,12 +14,15 @@ from stiffness import (
     boundary_description,
     boundary_factor,
     analyze_pseudotridimensional,
+    calculate_group,
     calculate_story,
     convert_group_units,
     direction_label,
     material_label,
     resistance_bounds,
     resistance_label,
+    _matmul,
+    _transpose,
 )
 
 
@@ -1011,44 +1014,226 @@ def _compact_number(value: float) -> str:
     return format_number(number, 3)
 
 
-def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
-    header = "".join(f"<th>{escape(label)}</th>" for label in labels)
+def _labeled_matrix_table(matrix: list[list[float]], row_labels: list[str], col_labels: list[str], corner: str = "") -> str:
+    header = "".join(f"<th>{escape(label)}</th>" for label in col_labels)
     rows = []
-    for index, row in enumerate(matrix):
+    for row_label, row in zip(row_labels, matrix):
         cells = "".join(f"<td>{_compact_number(value)}</td>" for value in row)
-        rows.append(f"<tr><th>{escape(labels[index])}</th>{cells}</tr>")
-    return f'<table class="matrix-table"><thead><tr><th>GDL</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        rows.append(f"<tr><th>{escape(row_label)}</th>{cells}</tr>")
+    return f'<table class="matrix-table"><thead><tr><th>{escape(corner)}</th>{header}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
 
 
-def toggle_matrix_panel() -> None:
-    """Abre/cierra el detalle de la matriz con un único clic.
+def _matrix_table(matrix: list[list[float]], labels: list[str]) -> str:
+    return _labeled_matrix_table(matrix, labels, labels, "GDL")
 
-    Se llama con event.preventDefault() ya aplicado en el clic de la
-    <summary>, así el toggle nativo del navegador nunca compite con este
-    cambio explícito del atributo 'open'. Antes dependíamos del toggle
-    nativo más un parche que restauraba el estado tras cada re-render;
-    si un re-render caía justo entre el clic y el toggle nativo, hacía
-    falta un segundo clic para que el panel realmente abriera.
+
+def _analysis_steps_html(result: dict) -> str:
+    """Desarrollo didáctico paso a paso, recalculado con los datos vigentes.
+
+    Reutiliza exactamente las mismas cifras que ya calculó
+    analyze_pseudotridimensional (result y result['frames']), así que nunca
+    puede desincronizarse de lo que muestran las demás tarjetas: si el
+    usuario cambia una fuerza, una altura o agrega un eje, este desarrollo
+    se recalcula solo, como el resto de la Etapa 2.
     """
-    details = document.querySelector(".matrix-card")
+    frames = result["frames"]
+    levels = result["levels"]
+    level_labels = [f"Nivel {level + 1}" for level in range(levels)]
+    dof_labels: list[str] = []
+    for level in range(levels):
+        dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
+    stiffness_unit = "kN/m" if units == "SI" else "tonf/m"
+
+    # Paso 0 — rigidez de columna por eje
+    rows0 = []
+    for group, frame in zip(groups, frames):
+        calc0 = calculate_group(group, analysis_heights[0], units)
+        k_levels = " · ".join(_compact_number(value) for value in frame["story_stiffnesses"])
+        rows0.append(
+            f"<tr><td>{escape(str(group.axis))}</td><td>{escape(material_label(group.material))}</td>"
+            f"<td>{_compact_number(calc0.elastic_modulus)} {escape(calc0.modulus_unit)}</td>"
+            f"<td>{_compact_number(calc0.inertia)} {escape(calc0.inertia_unit)}</td>"
+            f"<td>{int(group.quantity)}</td><td>{k_levels} kN/m</td></tr>"
+        )
+    step0 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">0</span>Rigidez lateral de cada eje</h4>
+        <p>Cada columna aporta <code>k_col = c·E·I / h³</code> (c=12 con ambos extremos empotrados). El eje suma sus columnas en paralelo: <code>k_eje = n · k_col</code>. Si la altura cambia por nivel, k_eje se recalcula en cada uno.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Material</th><th>E</th><th>I</th><th>n° col.</th><th>k_eje por nivel</th></tr></thead><tbody>{"".join(rows0)}</tbody></table></div>
+      </div>
+    """
+
+    # Paso 1 — identificación de ejes y sistema global
+    rows1 = []
+    for group in groups:
+        beta = radians(float(group.beta))
+        rows1.append(
+            f"<tr><td>{escape(str(group.axis))}</td><td>{format_number(group.x0, 3)}</td><td>{format_number(group.y0, 3)}</td>"
+            f"<td>{format_number(group.beta, 1)}</td><td>{_compact_number(cos(beta))}</td><td>{_compact_number(sin(beta))}</td></tr>"
+        )
+    dof_list_text = ", ".join(dof_labels)
+    step1 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">1</span>Identificación de ejes y sistema global</h4>
+        <p>Sistema global X-Y: cada eje se ubica con un punto (x₀,y₀) sobre él y el ángulo β respecto a X (positivo antihorario).</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>x₀ (m)</th><th>y₀ (m)</th><th>β (°)</th><th>cos β</th><th>sin β</th></tr></thead><tbody>{"".join(rows1)}</tbody></table></div>
+        <p>Centro de masa: CM = ({format_number(analysis_cm_x, 3)} ; {format_number(analysis_cm_y, 3)}) m. Incógnitas: {{U}} = {{{escape(dof_list_text)}}}<sup>T</sup> → {3 * levels} grados de libertad.</p>
+      </div>
+    """
+
+    # Paso 2 — matriz local K_eje de cada eje
+    step2_blocks = []
+    for frame in frames:
+        step2_blocks.append(
+            f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
+            + _labeled_matrix_table(frame["local_matrix"], level_labels, level_labels, "Nivel")
+        )
+    step2 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">2</span>Rigidez lateral de cada eje (K<sub>eje</sub>)</h4>
+        <p>Modelo de corte apilado: fila y columna representan niveles; el eje se comporta como resortes de corte en serie.</p>
+        {"".join(step2_blocks)}
+      </div>
+    """
+
+    # Paso 3 — brazos de palanca r y matrices [G]
+    step3_blocks = []
+    for frame in frames:
+        formula = (
+            f"r_{frame['axis']} = -({format_number(frame['x0'], 3)} - {format_number(analysis_cm_x, 3)})·sin({format_number(frame['beta'], 1)}°) "
+            f"+ ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
+        )
+        step3_blocks.append(
+            f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
+            f'<div class="step-formula">{escape(formula)}</div>'
+            + _labeled_matrix_table(frame["transformation"], level_labels, dof_labels, "Nivel")
+        )
+    step3 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">3</span>Brazos r<sub>j</sub> y matrices de transformación [G<sub>j</sub>]</h4>
+        <p><code>r = -(x₀-x_CM)·sinβ + (y₀-y_CM)·cosβ</code>. [G] relaciona el desplazamiento del eje con {{u<sub>x</sub>, u<sub>y</sub>, θ}} del diafragma, nivel a nivel.</p>
+        {"".join(step3_blocks)}
+      </div>
+    """
+
+    # Paso 4 — contribución de cada eje y ensamblaje de K_P3D
+    first_frame = frames[0]
+    intermediate = _matmul(first_frame["local_matrix"], first_frame["transformation"])
+    contribution = _matmul(_transpose(first_frame["transformation"]), intermediate)
+    other_axes = ", ".join(
+        f"eje {escape(str(frame['axis']))} (r={format_number(frame['lever_arm'], 3)} m, k={_compact_number(frame['story_stiffnesses'][0])} {stiffness_unit})"
+        for frame in frames[1:]
+    )
+    step4 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">4</span>Contribución de cada eje a la matriz global</h4>
+        <p>Cada eje aporta con la transformación de congruencia <code>[K_eje]<sub>global</sub> = [G]<sup>T</sup>[K_eje][G]</code>. Se muestra el desarrollo completo del primer eje; los demás siguen el mismo procedimiento.</p>
+        <p class="step-axis-title">Eje {escape(str(first_frame["axis"]))} — producto [K_local]·[G]</p>
+        {_labeled_matrix_table(intermediate, level_labels, dof_labels, "Nivel")}
+        <p class="step-axis-title">Eje {escape(str(first_frame["axis"]))} — [G]<sup>T</sup>·(anterior) = aporte a K global</p>
+        {_labeled_matrix_table(contribution, dof_labels, dof_labels, "GDL")}
+        {f'<p class="step-note">Los demás ejes se procesan igual: {other_axes}.</p>' if other_axes else ""}
+        <p class="step-axis-title">Matriz global ensamblada K<sub>P3D</sub> = Σ [G]<sup>T</sup>[K_eje][G]</p>
+        {_matrix_table(result["global_matrix"], dof_labels)}
+      </div>
+    """
+
+    # Paso 5 — vector de fuerzas F
+    force_rows = []
+    for level, load in enumerate(result["floor_loads"]):
+        force_rows.append(
+            f"<tr><td>Nivel {level + 1}</td><td>{format_number(load['fx'], 3)}</td><td>{format_number(load['fy'], 3)}</td><td>{format_number(load['mz'], 3)}</td></tr>"
+        )
+    step5 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">5</span>Vector de fuerzas {{F}}</h4>
+        <p>Independiente de K: sale directo de las fuerzas de entrada, el ángulo α y las excentricidades accidentales — no de la geometría de los ejes. <code>Fx=F·cosα</code>, <code>Fy=F·sinα</code>, <code>Mz=e<sub>acc,x</sub>·Fy − e<sub>acc,y</sub>·Fx</code>.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>Fx (kN)</th><th>Fy (kN)</th><th>Mz (kN·m)</th></tr></thead><tbody>{"".join(force_rows)}</tbody></table></div>
+      </div>
+    """
+
+    # Paso 6 — solución del sistema K·U=F
+    disp_rows = []
+    for item in result["displacements"]:
+        disp_rows.append(
+            f"<tr><td>Nivel {item['level']}</td><td>{format_number(item['ux'] * 1000.0, 4)}</td><td>{format_number(item['uy'] * 1000.0, 4)}</td><td>{format_number(item['theta'] * 1000.0, 5)}</td></tr>"
+        )
+    step6 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">6</span>Solución del sistema [K<sub>P3D</sub>]{{U}} = {{F}}</h4>
+        <p>Resolviendo el sistema lineal se obtienen los desplazamientos y el giro de cada diafragma.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>u<sub>x</sub> (mm)</th><th>u<sub>y</sub> (mm)</th><th>θ (mrad)</th></tr></thead><tbody>{"".join(disp_rows)}</tbody></table></div>
+      </div>
+    """
+
+    # Paso 7 — centro de rigidez
+    a_xx = a_xy = a_yy = b_x = b_y = 0.0
+    for frame in frames:
+        beta = radians(float(frame["beta"]))
+        dir_x, dir_y = cos(beta), sin(beta)
+        k1 = float(frame["story_stiffnesses"][0])
+        r = float(frame["lever_arm"])
+        a_xx += k1 * dir_x * dir_x
+        a_xy += k1 * dir_x * dir_y
+        a_yy += k1 * dir_y * dir_y
+        b_x += k1 * dir_x * r
+        b_y += k1 * dir_y * r
+    center_rigidity = result["center_rigidity"]
+    if center_rigidity is not None:
+        cr_text = f"CR = ({format_number(center_rigidity['x'], 3)} ; {format_number(center_rigidity['y'], 3)}) m"
+    else:
+        cr_text = "El sistema es singular en el nivel 1 (a_xx·a_yy = a_xy²); no se pudo aislar un CR único con esta configuración."
+    step7 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">7</span>Centro de rigidez (CR)</h4>
+        <p>Se anula el acople traslación-giro de la matriz de nivel 1: a_xx={_compact_number(a_xx)}, a_xy={_compact_number(a_xy)}, a_yy={_compact_number(a_yy)}, b_x={_compact_number(b_x)}, b_y={_compact_number(b_y)} ({stiffness_unit}, referidos al nivel 1).</p>
+        <div class="step-formula">q_x = (-b_x·a_yy + a_xy·b_y) / (a_xx·a_yy - a_xy²)
+q_y = (a_xy·b_x - a_xx·b_y) / (a_xx·a_yy - a_xy²)
+CR = (x_CM + q_y ; y_CM - q_x)</div>
+        <p><strong>{escape(cr_text)}</strong></p>
+      </div>
+    """
+
+    # Paso 8 — reparto de fuerzas por eje
+    rows8 = []
+    for frame in frames:
+        for level in range(levels - 1, -1, -1):
+            moment = frame["end_moments"][level]
+            moment_text = "—" if moment is None else format_number(moment, 3)
+            rows8.append(
+                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['story_shears'][level], 3)}</td>"
+                f"<td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
+            )
+    step8 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">8</span>Reparto de fuerzas por eje</h4>
+        <p><code>δ_eje = [G]{{U}}</code>, luego <code>V_eje = [K_eje]·δ_eje</code>. El cortante de cada eje se reparte entre sus columnas iguales; el momento Vh/2 solo aplica a uniones empotrada–empotrada.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{"".join(rows8)}</tbody></table></div>
+      </div>
+    """
+
+    return step0 + step1 + step2 + step3 + step4 + step5 + step6 + step7 + step8
+
+
+def toggle_details_panel(selector: str) -> None:
+    """Abre/cierra un <details> con un único clic (ver nota en el uso original).
+
+    Generalizado para reutilizarse tanto en 'Matriz global K' como en
+    'Desarrollo paso a paso': el clic llega con preventDefault ya aplicado,
+    así el toggle nativo del navegador nunca compite con este cambio
+    explícito del atributo 'open'.
+    """
+    details = document.querySelector(selector)
     if hasattr(details, "open"):
         details.open = not bool(details.open)
 
 
-def _update_matrix_panel(html: str) -> None:
-    """Actualiza el contenido de 'ver detalle' preservando si estaba abierto.
-
-    Revisión de código: ningún renderizado actual reemplaza el propio nodo
-    <details>, solo el <div> interior, así que un cierre del panel no debería
-    depender de esto. Aun así, se deja como blindaje explícito: si por
-    cualquier motivo (orden de eventos del navegador, remount de PyScript,
-    etc.) el estado se perdiera, este helper lo restaura en el mismo ciclo.
-    """
-    details = document.querySelector(".matrix-card")
+def _update_details_panel(panel_id: str, selector: str, html: str) -> None:
+    details = document.querySelector(selector)
     was_open = False
     if hasattr(details, "open"):
         was_open = bool(details.open)
-    by_id("analysis-matrix").innerHTML = html
+    by_id(panel_id).innerHTML = html
     if hasattr(details, "open"):
         details.open = was_open
 
@@ -1361,7 +1546,8 @@ def _clear_analysis_results(message: str) -> None:
     )
     by_id("analysis-displacements").innerHTML = ""
     by_id("analysis-frames").innerHTML = ""
-    _update_matrix_panel('<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>')
+    _update_details_panel("analysis-matrix", ".matrix-card", '<p class="matrix-caption">La matriz aparecerá cuando el sistema tenga estabilidad global.</p>')
+    _update_details_panel("analysis-steps", ".steps-card", '<p class="matrix-caption">El desarrollo paso a paso aparecerá cuando el sistema tenga estabilidad global.</p>')
     placeholder = '<p class="matrix-caption">Disponible cuando el modelo tenga estabilidad global.</p>'
     by_id("analysis-deformed-plan").innerHTML = placeholder
     by_id("analysis-deformed-plan-caption").textContent = ""
@@ -1448,11 +1634,14 @@ def render_analysis_results() -> None:
         f"{label}={_compact_number(value)}"
         for label, value in zip(force_labels, result["force_vector"])
     )
-    _update_matrix_panel(
+    _update_details_panel(
+        "analysis-matrix",
+        ".matrix-card",
         '<p class="matrix-caption">K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G. Orden de grados de libertad: {u<sub>x</sub>, u<sub>y</sub>, θ} por nivel.</p>'
         + _matrix_table(result["global_matrix"], dof_labels)
         + f'<p class="matrix-caption"><strong>Vector F</strong> (kN y kN·m, mismo orden de niveles): {force_items}</p>'
     )
+    _update_details_panel("analysis-steps", ".steps-card", _analysis_steps_html(result))
 
     render_deformation_views(result)
     render_action_charts(result)
@@ -1622,9 +1811,9 @@ def handle_click(event):
     action = str(action_element.getAttribute("data-action"))
     if action == "units":
         change_units(str(action_element.getAttribute("data-value")))
-    elif action == "toggle-matrix":
+    elif action == "toggle-details":
         event.preventDefault()
-        toggle_matrix_panel()
+        toggle_details_panel(str(action_element.getAttribute("data-target")))
     elif action == "stage":
         set_stage(str(action_element.getAttribute("data-value")))
     elif action == "load-analysis-example":
