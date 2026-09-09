@@ -27,6 +27,7 @@ class LevelLoad:
     cv: float  # kN/m2 (sobrecarga de uso, sin reducir)
     height: float  # m (altura de piso a piso, usada para h_i acumulada)
     is_roof: bool = False
+    use_key: str = ""  # uso E.020 seleccionado; permite conservarlo en la interfaz
     beam_count: int = 0
     beam_width: float = 0.25  # m
     beam_depth: float = 0.40  # m

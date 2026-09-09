@@ -83,9 +83,10 @@ groups = [
 
 next_load_level_number = 3
 load_levels = [
-    LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False),
-    LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True),
+    LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False, use_key="vivienda"),
+    LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True, use_key="azotea_no_transitable"),
 ]
+loads_use_preset = "vivienda"
 loads_zone = "3"
 loads_soil = "S2"
 loads_category = "C"
@@ -1045,7 +1046,10 @@ def render_results() -> None:
 
 def render_analysis_inputs() -> None:
     """Sincroniza los controles de la etapa 2 con el estado de Python."""
-    by_id("analysis-levels").value = str(analysis_level_count)
+    by_id("building-levels").value = str(analysis_level_count)
+    by_id("analysis-level-count").textContent = (
+        "1 nivel" if analysis_level_count == 1 else f"{analysis_level_count} niveles"
+    )
     by_id("analysis-alpha").value = input_number(analysis_alpha)
     by_id("analysis-cm-x").value = input_number(analysis_cm_x)
     by_id("analysis-cm-y").value = input_number(analysis_cm_y)
@@ -1838,17 +1842,11 @@ def render_analysis_results() -> None:
 
 
 def load_level_card(level: LevelLoad, index: int) -> str:
-    can_remove = len(load_levels) > 1
-    remove_button = (
-        f'<button type="button" class="button remove-button" data-action="remove-load-level" '
-        f'data-id="{level.id}" aria-label="Eliminar nivel {index + 1}">×</button>'
-        if can_remove
-        else ""
-    )
     floor_selected = "" if level.is_roof else " is-selected"
     roof_selected = " is-selected" if level.is_roof else ""
     preset_options = "".join(
-        f'<option value="{key}">{escape(label)}</option>' for key, (label, _value) in LIVE_LOAD_PRESETS.items()
+        f'<option value="{key}"{" selected" if key == level.use_key else ""}>{escape(label)}</option>'
+        for key, (label, _value) in LIVE_LOAD_PRESETS.items()
     )
     label_value = escape(str(level.label), quote=True)
     columns = column_takeoff(level.height)
@@ -1861,7 +1859,7 @@ def load_level_card(level: LevelLoad, index: int) -> str:
     <article class="column-card load-level-card" data-card-id="{level.id}">
       <div class="column-card__head">
         <div><span class="column-code">N{index + 1}</span><div><h3>Nivel {index + 1}</h3><p>{"Techo / azotea" if level.is_roof else "Piso"}</p></div></div>
-        {remove_button}
+        <span class="inherited-level-badge">Definido en Rigidez</span>
       </div>
       <div class="form-grid form-grid--compact">
         <div class="field-block">
@@ -1900,10 +1898,10 @@ def load_level_card(level: LevelLoad, index: int) -> str:
       <div class="field-block">
         <label for="load-preset-{level.id}">Sobrecarga típica (E.020)</label>
         <select id="load-preset-{level.id}" data-level-id="{level.id}" data-field="load-preset">
-          <option value="">— elegir uso —</option>
+          <option value=""{" selected" if not level.use_key else ""}>— elegir uso —</option>
           {preset_options}
         </select>
-        <small>Al elegir un uso se llena el campo CV; puedes seguir editándolo a mano.</small>
+        <small>El uso general ya está aplicado. Usa este selector sólo si el nivel tiene un uso diferente.</small>
       </div>
 
       <section class="mass-geometry-card" aria-labelledby="mass-geometry-{level.id}">
@@ -1958,11 +1956,12 @@ def render_load_levels() -> None:
     by_id("loads-level-list").innerHTML = "".join(
         load_level_card(level, index) for index, level in enumerate(load_levels)
     )
-    by_id("load-level-count").textContent = f"{len(load_levels)}/12"
-    by_id("add-load-level").disabled = len(load_levels) >= 12
+    level_word = "nivel" if len(load_levels) == 1 else "niveles"
+    by_id("loads-level-count").textContent = f"{len(load_levels)} {level_word} heredados de Rigidez"
 
 
 def render_loads_site_inputs() -> None:
+    by_id("loads-use-global").value = loads_use_preset
     by_id("loads-zone").value = loads_zone
     by_id("loads-soil").value = loads_soil
     by_id("loads-category").value = loads_category
@@ -2401,30 +2400,85 @@ def render_loads_results() -> None:
     _update_details_panel("loads-steps", ".steps-card", _loads_steps_html(result, site))
 
 
-def add_load_level() -> None:
-    global next_load_level_number
-    if len(load_levels) >= 12:
-        return
-    insertion_index = (
-        len(load_levels) - 1
-        if load_levels and load_levels[-1].is_roof
-        else len(load_levels)
-    )
-    load_levels.insert(
-        insertion_index,
-        LevelLoad(
-            id=f"lv{next_load_level_number}",
-            label=f"Nivel {insertion_index + 1}",
-            area=200.0,
-            cm=6.5,
-            cv=2.0,
-            height=3.0,
-            is_roof=False,
+def configure_building_levels(levels: int, render: bool = True) -> None:
+    """Mantiene una sola cantidad de niveles para Rigidez, Metrado y Análisis."""
+
+    global next_load_level_number, analysis_level_count
+    global analysis_heights, analysis_forces
+    global analysis_stiffness_x, analysis_stiffness_y
+
+    target = max(1, min(12, int(levels)))
+
+    if not load_levels:
+        load_levels.append(
+            LevelLoad(
+                id=f"lv{next_load_level_number}",
+                label="Azotea",
+                area=200.0,
+                cm=5.0,
+                cv=live_load_preset("azotea_no_transitable"),
+                height=story_height,
+                is_roof=True,
+                use_key="azotea_no_transitable",
+            )
         )
-    )
-    next_load_level_number += 1
-    render_load_levels()
-    render_loads_results()
+        next_load_level_number += 1
+
+    roof = next((level for level in reversed(load_levels) if level.is_roof), load_levels[-1])
+    regular_levels = [level for level in load_levels if level is not roof]
+    for level in regular_levels:
+        level.is_roof = False
+    roof.is_roof = True
+    roof.use_key = "azotea_no_transitable"
+    roof.cv = live_load_preset(roof.use_key)
+    load_levels[:] = regular_levels + [roof]
+
+    while len(load_levels) > target:
+        load_levels.pop(-2 if len(load_levels) > 1 else -1)
+
+    while len(load_levels) < target:
+        insertion_index = len(load_levels) - 1
+        reference = load_levels[0] if len(load_levels) > 1 else roof
+        load_levels.insert(
+            insertion_index,
+            LevelLoad(
+                id=f"lv{next_load_level_number}",
+                label=f"Nivel {insertion_index + 1}",
+                area=reference.area,
+                cm=6.5,
+                cv=live_load_preset(loads_use_preset),
+                height=story_height,
+                is_roof=False,
+                use_key=loads_use_preset,
+                center_x=reference.center_x,
+                center_y=reference.center_y,
+                plan_x=reference.plan_x,
+                plan_y=reference.plan_y,
+            ),
+        )
+        next_load_level_number += 1
+
+    previous_forces = list(analysis_forces)
+    analysis_level_count = target
+    analysis_heights = [level.height for level in load_levels]
+    analysis_forces = [
+        previous_forces[index] if index < len(previous_forces) else 100.0 * (index + 1)
+        for index in range(target)
+    ]
+    analysis_stiffness_x = [level.stiffness_x_override for level in load_levels]
+    analysis_stiffness_y = [level.stiffness_y_override for level in load_levels]
+
+    if render:
+        render_load_levels()
+        render_loads_results()
+        render_analysis_inputs()
+        render_analysis_results()
+
+
+def add_load_level() -> None:
+    """Compatibilidad interna: la interfaz cambia los niveles desde Rigidez."""
+
+    configure_building_levels(len(load_levels) + 1)
 
 
 def apply_loads_to_analysis() -> None:
@@ -2533,20 +2587,7 @@ def set_stage(stage: str) -> None:
 
 
 def resize_analysis_levels(levels: int) -> None:
-    global analysis_level_count, analysis_heights, analysis_forces
-    global analysis_stiffness_x, analysis_stiffness_y
-    analysis_level_count = max(1, min(12, int(levels)))
-    while len(analysis_heights) < analysis_level_count:
-        analysis_heights.append(story_height)
-        analysis_forces.append(100.0 * (len(analysis_forces) + 1))
-        analysis_stiffness_x.append(0.0)
-        analysis_stiffness_y.append(0.0)
-    analysis_heights = analysis_heights[:analysis_level_count]
-    analysis_forces = analysis_forces[:analysis_level_count]
-    analysis_stiffness_x = analysis_stiffness_x[:analysis_level_count]
-    analysis_stiffness_y = analysis_stiffness_y[:analysis_level_count]
-    render_analysis_inputs()
-    render_analysis_results()
+    configure_building_levels(levels)
 
 
 def load_analysis_example() -> None:
@@ -2555,6 +2596,7 @@ def load_analysis_example() -> None:
     global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     units = "SI"
+    configure_building_levels(2, render=False)
     analysis_level_count = 2
     analysis_heights = [3.0, 3.0]
     analysis_forces = [100.0, 200.0]
@@ -2582,6 +2624,8 @@ def load_analysis_example() -> None:
     render_unit_toggle()
     render_groups()
     render_results()
+    render_load_levels()
+    render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
 
@@ -2647,7 +2691,7 @@ def reset() -> None:
     global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     global load_levels, next_load_level_number
-    global loads_zone, loads_soil, loads_category, loads_system
+    global loads_use_preset, loads_zone, loads_soil, loads_category, loads_system
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
     global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
     global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
@@ -2664,10 +2708,11 @@ def reset() -> None:
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     load_levels = [
-        LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False),
-        LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True),
+        LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False, use_key="vivienda"),
+        LevelLoad(id="lv2", label="Azotea", area=200.0, cm=5.0, cv=1.0, height=3.0, is_roof=True, use_key="azotea_no_transitable"),
     ]
     next_load_level_number = 3
+    loads_use_preset = "vivienda"
     loads_zone, loads_soil, loads_category, loads_system = "3", "S2", "C", "muros"
     loads_ia, loads_ip = 1.0, 1.0
     loads_discontinuity_vertical = False
@@ -2743,14 +2788,6 @@ def handle_click(event):
             render_results()
             render_loads_results()
             render_analysis_results()
-    elif action == "add-load-level":
-        add_load_level()
-    elif action == "remove-load-level":
-        level_id = str(action_element.getAttribute("data-id"))
-        if len(load_levels) > 1:
-            load_levels[:] = [level for level in load_levels if level.id != level_id]
-            render_load_levels()
-            render_loads_results()
     elif action == "load-roof":
         level_id = str(action_element.getAttribute("data-id"))
         level = get_load_level(level_id)
@@ -2759,13 +2796,15 @@ def handle_click(event):
             if make_roof:
                 for other_level in load_levels:
                     other_level.is_roof = False
+                    if other_level is not level:
+                        other_level.use_key = loads_use_preset
+                        other_level.cv = live_load_preset(loads_use_preset)
                 level.is_roof = True
+                level.use_key = "azotea_no_transitable"
+                level.cv = live_load_preset(level.use_key)
                 load_levels.remove(level)
                 load_levels.append(level)
-            else:
-                level.is_roof = False
-            render_load_levels()
-            render_loads_results()
+            configure_building_levels(len(load_levels))
     elif action == "apply-loads":
         apply_loads_to_analysis()
 
@@ -2781,7 +2820,12 @@ def handle_input(event):
     field = str(field)
     if field == "story-height":
         story_height = parse_number(target.value)
+        for level in load_levels:
+            level.height = story_height
+        analysis_heights[:] = [story_height] * analysis_level_count
         render_results()
+        render_loads_results()
+        render_analysis_results()
         return
     if field == "analysis-height":
         level = int(str(target.getAttribute("data-level")))
@@ -2869,7 +2913,13 @@ def handle_input(event):
                 "load-vny": "strength_y",
             }[field]
             setattr(level, attribute, parse_number(target.value))
+            if field == "load-height":
+                level_index = load_levels.index(level)
+                if level_index < len(analysis_heights):
+                    analysis_heights[level_index] = level.height
         render_loads_results()
+        if field == "load-height":
+            render_analysis_results()
         return
     group_id = str(target.getAttribute("data-group"))
     group = get_group(group_id)
@@ -2895,6 +2945,7 @@ def handle_input(event):
 
 @when("change", "#calculator")
 def handle_change(event):
+    global loads_use_preset
     global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
     global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
     target = event.target
@@ -2902,7 +2953,7 @@ def handle_change(event):
     if field is None:
         return
     field = str(field)
-    if field == "analysis-levels":
+    if field == "building-levels":
         resize_analysis_levels(int(parse_number(target.value, 2.0)))
         return
     if field == "analysis-deform-level":
@@ -2935,6 +2986,14 @@ def handle_change(event):
         loads_system = str(target.value)
         render_loads_results()
         return
+    if field == "loads-use-global":
+        loads_use_preset = str(target.value)
+        for level in load_levels:
+            level.use_key = "azotea_no_transitable" if level.is_roof else loads_use_preset
+            level.cv = live_load_preset(level.use_key)
+        render_load_levels()
+        render_loads_results()
+        return
     if field == "loads-period-mode":
         global loads_period_mode
         loads_period_mode = str(target.value)
@@ -2965,6 +3024,7 @@ def handle_change(event):
         level = get_load_level(str(target.getAttribute("data-level-id")))
         preset_key = str(target.value)
         if level is not None and preset_key:
+            level.use_key = preset_key
             level.cv = live_load_preset(preset_key)
             render_load_levels()
             render_loads_results()

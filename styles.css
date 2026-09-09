@@ -78,7 +78,15 @@ button { cursor: pointer; }
 
 .story-card, .column-card, .frame-diagram, .contribution-card, .calculation-card { background: white; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgba(18,44,51,.05); }
 .story-card { display: grid; grid-template-columns: 48px 1fr; gap: 14px; align-items: start; margin-bottom: 14px; padding: 18px; }
+.building-setup-card { grid-template-columns: 48px repeat(2,minmax(0,1fr)); column-gap: 14px; row-gap: 12px; }
+.building-setup-note { grid-column: 2 / -1; margin: 0; padding: 9px 11px; color: var(--teal-dark); background: var(--teal-pale); border-radius: 7px; font-size: 12px; font-weight: 700; line-height: 1.45; }
 .story-icon { width: 46px; height: 46px; display: grid; place-items: center; color: var(--teal-dark); background: var(--teal-pale); border-radius: 8px; font-size: 22px; }
+.axis-builder-guide { margin-bottom: 14px; padding: 16px 17px; color: #dfe9ea; background: linear-gradient(135deg,#10191d,#17282d); border: 1px solid #2a3c42; border-left: 4px solid var(--amber); border-radius: 11px; box-shadow: 0 8px 22px rgba(11,17,21,.1); }
+.axis-builder-guide > strong { display: block; color: white; font-size: 14px; }
+.axis-builder-guide ol { display: grid; gap: 7px; margin: 12px 0 10px; padding: 0; list-style: none; }
+.axis-builder-guide li { display: grid; grid-template-columns: 25px minmax(0,1fr); gap: 8px; align-items: center; font-size: 12px; }
+.axis-builder-guide li span { width: 24px; height: 24px; display: grid; place-items: center; color: #15343b; background: #78d7d4; border-radius: 6px; font-family: var(--mono); font-size: 10px; font-weight: 800; }
+.axis-builder-guide small { color: #aebfc2; font-size: 11px; line-height: 1.45; }
 .field-block { min-width: 0; }
 .field-block label, .field-block legend { display: block; margin-bottom: 8px; color: #314149; font-size: 14px; font-weight: 700; }
 .field-block small { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
@@ -280,6 +288,11 @@ select { padding: 8px 10px; }
 .example-button:hover { background: #cde9e6; }
 .analysis-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .analysis-form-grid--four { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.global-use-card { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(260px,.85fr); gap: 20px; align-items: center; margin-bottom: 18px; padding: 17px 18px; background: #eef8f6; border: 1px solid #b9dbd7; border-left: 4px solid var(--teal); border-radius: 11px; }
+.global-use-card > div:first-child { display: grid; gap: 4px; }
+.global-use-card > div:first-child strong { color: #16383e; font-size: 15px; }
+.global-use-card > div:first-child small { color: #5b6f73; font-size: 12px; line-height: 1.5; }
+.global-use-card__step { color: var(--teal-dark); font-family: var(--mono); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .analysis-subsection { margin-top: 22px; padding-top: 19px; border-top: 1px solid var(--border); }
 .analysis-subsection .subheading { margin-bottom: 10px; }
 .field-help { margin: 8px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -287,6 +300,8 @@ select { padding: 8px 10px; }
 .analysis-floor-list, .analysis-frame-list { display: grid; gap: 8px; }
 #loads-level-list { gap: 18px; }
 .load-level-card { padding: 22px; }
+.inherited-level-badge { flex: 0 0 auto; padding: 5px 8px; color: var(--teal-dark); background: var(--teal-pale); border: 1px solid #b5dcda; border-radius: 999px; font-size: 10px; font-weight: 800; }
+.inherited-levels-button { width: 100%; margin-top: 12px; border: 1px dashed #9bb4b1; }
 .mass-geometry-card { margin-top: 18px; padding: 15px; background: #fffaf1; border: 1px solid #e7dac5; border-radius: 10px; }
 .mass-geometry-card > div:first-child { display: grid; gap: 3px; margin-bottom: 13px; }
 .mass-geometry-card > div:first-child strong { font-size: 14px; }
@@ -551,6 +566,9 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .column-card, .contribution-card, .calculation-card, .result-card, .theory-section { padding: 16px; }
   .form-grid, .form-grid--compact { grid-template-columns: 1fr; }
   .load-level-card { padding: 18px; }
+  .building-setup-card, .global-use-card { grid-template-columns: 1fr; }
+  .building-setup-note { grid-column: 1; }
+  .inherited-level-badge { white-space: nowrap; }
   .element-takeoff-head, .column-takeoff-summary { align-items: flex-start; flex-direction: column; }
   .column-takeoff-summary output { text-align: left; }
   .axis-coordinate-grid, .mass-geometry-fields, .beam-takeoff-fields { grid-template-columns: 1fr; }

@@ -69,19 +69,37 @@
         <section class="input-panel" aria-labelledby="datos-heading">
           <div class="section-heading">
             <span class="step-number">01</span>
-            <div><h2 id="datos-heading">Datos del entrepiso</h2><p>Define la altura, propiedades y eje estructural de cada grupo.</p></div>
+            <div><h2 id="datos-heading">Edificio, columnas y ejes</h2><p>Define una sola vez los niveles y dibuja la planta estructural con sus grupos de columnas.</p></div>
           </div>
 
-          <div class="story-card">
-            <div class="story-icon" aria-hidden="true">↕</div>
+          <div class="story-card building-setup-card">
+            <div class="story-icon" aria-hidden="true">▦</div>
             <div class="field-block">
-              <label for="story-height">Altura libre h</label>
+              <label for="building-levels">Niveles totales</label>
+              <select id="building-levels" data-field="building-levels">
+                <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option><option value="9">9 niveles</option><option value="10">10 niveles</option><option value="11">11 niveles</option><option value="12">12 niveles</option>
+              </select>
+              <small>Incluye el último nivel de techo o azotea.</small>
+            </div>
+            <div class="field-block">
+              <label for="story-height">Altura típica de entrepiso</label>
               <div class="input-with-unit">
                 <input id="story-height" name="story-height" type="number" min="1" max="12" step="0.05" value="3" data-field="story-height" />
                 <span>m</span>
               </div>
-              <small>Distancia libre entre niveles de restricción.</small>
+              <small>Se copia inicialmente a todos los niveles.</small>
             </div>
+            <p class="building-setup-note">Estos niveles se reutilizan automáticamente en Metrado y Análisis.</p>
+          </div>
+
+          <div class="axis-builder-guide" role="note" aria-label="Cómo dibujar la planta estructural">
+            <strong>Dibuja tu planta en tres pasos</strong>
+            <ol>
+              <li><span>1</span>Añade un grupo de columnas.</li>
+              <li><span>2</span>Escribe el eje: 1, 2, A, B…</li>
+              <li><span>3</span>Ubícalo con X₀ e Y₀ y revisa la planta.</li>
+            </ol>
+            <small>La distribución definida aquí se usa inicialmente en todos los niveles.</small>
           </div>
 
           <div id="group-list" class="group-list">
@@ -181,7 +199,7 @@
 
         <div class="analysis-bridge" role="note">
           <span aria-hidden="true">1 → 2</span>
-          <div><strong>¿Qué cambió?</strong><p>En Rigidez definiste cuánto se opone cada eje al movimiento. Aquí defines cuánto pesa cada nivel y qué fuerza sísmica le corresponde; esas fuerzas alimentarán la Etapa 3.</p></div>
+          <div><strong>¿Qué cambió?</strong><p>Los niveles, columnas y ejes ya vienen de Rigidez. Aquí completas el uso y las cargas de cada piso para obtener el peso y la fuerza sísmica que alimentarán la Etapa 3.</p></div>
         </div>
 
         <div class="analysis-workspace">
@@ -189,6 +207,28 @@
             <div class="section-heading">
               <span class="step-number">02</span>
               <div><h2 id="loads-data-heading">Parámetros de sitio (E.030)</h2><p>Zona sísmica, suelo, categoría y sistema estructural.</p></div>
+            </div>
+
+            <div class="global-use-card">
+              <div>
+                <span class="global-use-card__step">USO GENERAL</span>
+                <strong>Aplicar la sobrecarga de uso a todos los pisos</strong>
+                <small>La selección queda guardada y se aplica a todos los pisos comunes. La azotea conserva su carga específica; luego puedes modificar un nivel individual.</small>
+              </div>
+              <div class="field-block">
+                <label for="loads-use-global">Uso de la edificación (E.020)</label>
+                <select id="loads-use-global" data-field="loads-use-global">
+                  <option value="vivienda" selected>Vivienda · 2,0 kN/m²</option>
+                  <option value="oficina">Oficina · 2,5 kN/m²</option>
+                  <option value="aula">Aula / centro de enseñanza · 3,0 kN/m²</option>
+                  <option value="corredor_publico">Corredores y escaleras públicas · 4,0 kN/m²</option>
+                  <option value="tienda">Tiendas / centros comerciales · 5,0 kN/m²</option>
+                  <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m²</option>
+                  <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m²</option>
+                  <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m²</option>
+                  <option value="otro">Otro · editable por nivel</option>
+                </select>
+              </div>
             </div>
 
             <div class="analysis-form-grid analysis-form-grid--four">
@@ -256,9 +296,9 @@
             </div>
 
             <div class="analysis-subsection">
-              <div class="subheading"><h3>Niveles y cargas por nivel</h3><span>CM y CV en kN/m² · alturas en m</span></div>
+              <div class="subheading"><h3>Niveles y cargas por nivel</h3><span id="loads-level-count">2 niveles heredados de Rigidez</span></div>
               <div id="loads-level-list" class="analysis-floor-list"></div>
-              <button id="add-load-level" type="button" class="button add-group" data-action="add-load-level">＋ Añadir nivel <span id="load-level-count">1/12</span></button>
+              <button type="button" class="button button-ghost inherited-levels-button" data-action="stage" data-value="rigidity">Cambiar cantidad de niveles en Rigidez</button>
             </div>
 
             <section class="irregularity-panel" aria-labelledby="irregularity-heading">
@@ -334,7 +374,7 @@
 
         <div class="analysis-bridge" role="note">
           <span aria-hidden="true">2 → 3</span>
-          <div><strong>¿Qué cambió?</strong><p>En Metrado obtuviste la fuerza sísmica de cada nivel. Aquí ubicas los ejes resistentes en el plano y se calcula cómo se mueve el edificio completo bajo esas fuerzas.</p></div>
+          <div><strong>¿Qué cambió?</strong><p>La cantidad de niveles y los ejes ya están definidos desde Rigidez; Metrado aporta sus fuerzas. Aquí se calcula cómo se desplaza y gira el edificio completo.</p></div>
         </div>
 
         <div class="analysis-workspace">
@@ -348,10 +388,9 @@
 
             <div class="analysis-form-grid">
               <div class="field-block">
-                <label for="analysis-levels">Número de niveles</label>
-                <select id="analysis-levels" data-field="analysis-levels">
-                  <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option><option value="9">9 niveles</option><option value="10">10 niveles</option><option value="11">11 niveles</option><option value="12">12 niveles</option>
-                </select>
+                <span class="output-label">Niveles definidos en Rigidez</span>
+                <output id="analysis-level-count" class="factor-output">2 niveles</output>
+                <small>Para cambiar la cantidad, vuelve a la Etapa 1.</small>
               </div>
               <div class="field-block">
                 <label for="analysis-alpha">Dirección sísmica α</label>
