@@ -156,11 +156,16 @@ select { padding: 8px 10px; }
 .frame-diagram, .contribution-card, .calculation-card { border-radius: 14px; }
 .frame-diagram { padding: 16px 18px 13px; }
 .frame-diagram-3d svg { width: 100%; height: auto; display: block; }
+.building-diagram { height: 540px; display: grid; place-items: center; overflow: hidden; }
+.building-diagram svg { width: 100%; height: 100%; }
 .iso-ground { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .iso-slab { fill: var(--teal-pale); fill-opacity: .92; stroke: var(--teal-dark); stroke-width: 2; stroke-linejoin: round; }
+.iso-slab--floor { fill-opacity: .2; stroke-width: 1.25; }
+.iso-slab--top { fill-opacity: .92; stroke-width: 2; }
 .iso-grid-line { stroke: #79aaa8; stroke-width: 1; stroke-dasharray: 4 3; opacity: .85; }
 .iso-grid-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 10px; font-weight: 800; }
 .iso-station-label { fill: var(--violet); font-family: var(--mono); font-size: 10px; font-weight: 800; }
+.iso-level-label { fill: #29484e; font-family: var(--mono); font-size: 9px; font-weight: 800; }
 .iso-column-concrete { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; }
 .iso-column-steel { stroke: var(--amber); stroke-width: 7; stroke-linecap: round; }
 .iso-footing { fill: none; stroke: #20464e; stroke-width: 3; stroke-linecap: round; }
@@ -566,6 +571,7 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .column-card, .contribution-card, .calculation-card, .result-card, .theory-section { padding: 16px; }
   .form-grid, .form-grid--compact { grid-template-columns: 1fr; }
   .load-level-card { padding: 18px; }
+  .building-diagram { height: 460px; }
   .building-setup-card, .global-use-card { grid-template-columns: 1fr; }
   .building-setup-note { grid-column: 1; }
   .inherited-level-badge { white-space: nowrap; }

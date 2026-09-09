@@ -790,20 +790,24 @@ def _grid_layout(cap_per_axis: int = 10) -> list[tuple[str, list[tuple[str, str,
 
 
 def render_frame_diagram() -> None:
-    """Dibuja la misma retícula estructural de la planta en vista isométrica."""
+    """Dibuja el edificio completo sin cambiar la escala al variar sus niveles."""
     layout = _grid_layout()
     if not layout:
         by_id("frame-diagram-3d").innerHTML = ""
         by_id("diagram-caption").textContent = "Añade un grupo para generar la retícula."
         return
 
+    total_levels = max(1, min(12, len(load_levels)))
+    maximum_levels = 12
     axis_count = len(layout)
     station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
     corner = (0.0, 0.0)
     ux = (64.0, -35.0)
     uy = (-48.0, -28.0)
-    height_px = max(78.0, min(172.0, 34.0 * max(story_height, 0.1)))
-    uz = (0.0, -height_px)
+    # Cada piso conserva siempre la misma altura gráfica. El encuadre reserva
+    # espacio para 12 niveles, por lo que el dibujo no hace zoom al cambiar N.
+    story_step_px = 34.0
+    uz = (0.0, -story_step_px)
     min_grid_x, max_grid_x = -0.36, max(0, axis_count - 1) + 0.36
     min_grid_y, max_grid_y = -0.36, max(0, station_count - 1) + 0.36
     parts: list[str] = []
@@ -814,60 +818,77 @@ def render_frame_diagram() -> None:
         bbox.append(projected)
         return projected
 
-    # Contorno de losa que rodea exactamente la retícula utilizada.
-    slab = [
-        point(min_grid_x, min_grid_y, 1),
-        point(max_grid_x, min_grid_y, 1),
-        point(max_grid_x, max_grid_y, 1),
-        point(min_grid_x, max_grid_y, 1),
-    ]
-    slab_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in slab)
-    parts.append(f'<polygon class="iso-slab" points="{slab_points}"/>')
+    total_columns = sum(axis_total for _, _, axis_total in layout)
 
-    # Líneas de la grilla sobre la losa.
+    # El edificio se construye desde la base: columnas del piso y luego su losa.
+    for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
+        for station_index, (_material, _shape, _direction) in enumerate(axis_units):
+            base = point(axis_index, station_index, 0)
+            parts.append(_iso_footing(*base))
+
+    for level_index in range(1, total_levels + 1):
+        for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
+            for station_index, (material, _shape, _direction) in enumerate(axis_units):
+                base = point(axis_index, station_index, level_index - 1)
+                top = point(axis_index, station_index, level_index)
+                parts.append(
+                    f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
+                    f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
+                )
+
+        slab = [
+            point(min_grid_x, min_grid_y, level_index),
+            point(max_grid_x, min_grid_y, level_index),
+            point(max_grid_x, max_grid_y, level_index),
+            point(min_grid_x, max_grid_y, level_index),
+        ]
+        slab_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in slab)
+        slab_class = "iso-slab iso-slab--top" if level_index == total_levels else "iso-slab iso-slab--floor"
+        parts.append(f'<polygon class="{slab_class}" points="{slab_points}"/>')
+
+        level_edge = point(max_grid_x, min_grid_y, level_index)
+        level_name = "Azotea" if level_index == total_levels else f"N{level_index}"
+        parts.append(
+            f'<text class="iso-level-label" x="{level_edge[0] + 11:.1f}" y="{level_edge[1] + 13:.1f}">{level_name}</text>'
+        )
+
+    top_level = total_levels
+
+    # Grilla, nombres de ejes y secciones sobre la última losa.
     for axis_index in range(axis_count):
-        start = point(axis_index, min_grid_y, 1)
-        end = point(axis_index, max_grid_y, 1)
+        start = point(axis_index, min_grid_y, top_level)
+        end = point(axis_index, max_grid_y, top_level)
         parts.append(
             f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
             f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
         )
     for station_index in range(station_count):
-        start = point(min_grid_x, station_index, 1)
-        end = point(max_grid_x, station_index, 1)
+        start = point(min_grid_x, station_index, top_level)
+        end = point(max_grid_x, station_index, top_level)
         parts.append(
             f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
             f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
         )
 
-    total_columns = 0
     for axis_index, (axis, axis_units, axis_total) in enumerate(layout):
-        total_columns += axis_total
-        label_point = point(axis_index, min_grid_y - 0.34, 1)
+        label_point = point(axis_index, min_grid_y - 0.34, top_level)
         parts.append(
             f'<text class="iso-grid-label" x="{label_point[0]:.1f}" y="{label_point[1] - 5:.1f}" '
             f'text-anchor="middle">{escape(_display_axis(axis))}</text>'
         )
         for station_index, (material, shape, _direction) in enumerate(axis_units):
-            base = point(axis_index, station_index, 0)
-            top = point(axis_index, station_index, 1)
-            parts.append(
-                f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
-                f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
-            )
-            parts.append(_iso_footing(*base))
+            top = point(axis_index, station_index, top_level)
             parts.append(_iso_shape_marker(top, material, shape, ux, uy))
         hidden_count = axis_total - len(axis_units)
         if hidden_count > 0:
-            overflow_point = point(axis_index, max(0, len(axis_units) - 1), 1.18)
+            overflow_point = point(axis_index, max(0, len(axis_units) - 1), top_level + 0.36)
             parts.append(
                 f'<text class="iso-overflow" x="{overflow_point[0]:.1f}" y="{overflow_point[1]:.1f}" '
                 f'text-anchor="middle">+{hidden_count}</text>'
             )
 
-    # Letras de las estaciones transversales.
     for station_index in range(station_count):
-        station_point = point(min_grid_x - 0.28, station_index, 1)
+        station_point = point(min_grid_x - 0.28, station_index, top_level)
         station = chr(65 + station_index)
         parts.append(
             f'<text class="iso-station-label" x="{station_point[0]:.1f}" y="{station_point[1]:.1f}" '
@@ -875,10 +896,10 @@ def render_frame_diagram() -> None:
         )
 
     # Flechas X/Y: indican la dirección de análisis, no la ubicación del eje.
-    x_start = point(max_grid_x, min_grid_y, 1)
-    x_end = point(max_grid_x + 0.7, min_grid_y, 1)
-    y_start = point(min_grid_x, max_grid_y, 1)
-    y_end = point(min_grid_x, max_grid_y + 0.7, 1)
+    x_start = point(max_grid_x, min_grid_y, top_level)
+    x_end = point(max_grid_x + 0.7, min_grid_y, top_level)
+    y_start = point(min_grid_x, max_grid_y, top_level)
+    y_end = point(min_grid_x, max_grid_y + 0.7, top_level)
     parts.extend(
         [
             f'<path class="iso-axis-x" d="M{x_start[0]:.1f} {x_start[1]:.1f} L{x_end[0]:.1f} {x_end[1]:.1f}" marker-end="url(#isoArrowX)"/>',
@@ -888,13 +909,8 @@ def render_frame_diagram() -> None:
         ]
     )
 
-    # La cota "h" se ubica a partir del punto más a la izquierda ya dibujado
-    # (en coordenadas de pantalla), no de un offset fijo en la grilla. Con
-    # varias estaciones en profundidad, la proyección isométrica desplaza las
-    # columnas del fondo mucho más a la izquierda que un offset fijo podía
-    # prever, y la cota terminaba superpuesta con ellas.
     reference_base = point(min_grid_x, min_grid_y, 0)
-    reference_top = point(min_grid_x, min_grid_y, 1)
+    reference_top = point(min_grid_x, min_grid_y, top_level)
     dim_x = min(x for x, _ in bbox) - 34.0
     dim_base = (dim_x, reference_base[1])
     dim_top = (dim_x, reference_top[1])
@@ -905,17 +921,36 @@ def render_frame_diagram() -> None:
     )
     parts.append(
         f'<text class="iso-dim-label" x="{dim_x - 7:.1f}" y="{(dim_base[1] + dim_top[1]) / 2:.1f}" '
-        f'text-anchor="end">h = {format_number(story_height, 2)} m</text>'
+        f'text-anchor="end">{total_levels}N · H = {format_number(total_levels * story_height, 2)} m</text>'
     )
 
-    padding = 42.0
-    min_x = min(x for x, _ in bbox) - padding
-    max_x = max(x for x, _ in bbox) + padding
-    min_y = min(y for _, y in bbox) - padding
-    max_y = max(y for _, y in bbox) + padding
+    padding_x = 48.0
+    min_x = min(x for x, _ in bbox) - padding_x
+    max_x = max(x for x, _ in bbox) + padding_x
+    # Reserva vertical constante para el máximo de 12 pisos. Sólo aumenta la
+    # altura del edificio; no cambia ni el tamaño del lienzo ni su escala.
+    reserve_top = min(
+        _iso_point(gx, gy, maximum_levels, corner, ux, uy, uz)[1]
+        for gx, gy in (
+            (min_grid_x, min_grid_y),
+            (max_grid_x, min_grid_y),
+            (max_grid_x, max_grid_y),
+            (min_grid_x, max_grid_y),
+        )
+    ) - 52.0
+    reserve_bottom = max(
+        _iso_point(gx, gy, 0, corner, ux, uy, uz)[1]
+        for gx, gy in (
+            (min_grid_x, min_grid_y),
+            (max_grid_x, min_grid_y),
+            (max_grid_x, max_grid_y),
+            (min_grid_x, max_grid_y),
+        )
+    ) + 58.0
     svg = (
-        f'<svg viewBox="{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}" '
-        'role="img" aria-label="Vista isométrica de la retícula estructural">'
+        f'<svg viewBox="{min_x:.1f} {reserve_top:.1f} {max_x - min_x:.1f} {reserve_bottom - reserve_top:.1f}" '
+        'preserveAspectRatio="xMidYMax meet" role="img" '
+        f'aria-label="Vista isométrica del edificio de {total_levels} niveles">'
         '<defs><marker id="isoArrowX" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
         '<path class="iso-arrowhead-x" d="M0,0 L8,4 L0,8 Z"/></marker>'
         '<marker id="isoArrowY" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
@@ -925,7 +960,7 @@ def render_frame_diagram() -> None:
     )
     by_id("frame-diagram-3d").innerHTML = svg
     by_id("diagram-caption").textContent = (
-        f"{total_columns} columna(s) distribuida(s) en {axis_count} eje(s) estructural(es)."
+        f"{total_levels} nivel(es) · {total_columns} columna(s) por nivel · {axis_count} eje(s) estructural(es)."
     )
 
 
@@ -2469,6 +2504,7 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
     analysis_stiffness_y = [level.stiffness_y_override for level in load_levels]
 
     if render:
+        render_frame_diagram()
         render_load_levels()
         render_loads_results()
         render_analysis_inputs()
