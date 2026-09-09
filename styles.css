@@ -453,6 +453,16 @@ select { padding: 8px 10px; }
 .matrix-table th, .matrix-table td { min-width: 72px; padding: 7px 8px; border: 1px solid #dfe6e4; text-align: right; white-space: nowrap; }
 .matrix-table th { color: #4d5e64; background: #eef3f2; }
 .matrix-caption { margin: 0 0 10px; color: var(--muted); font-size: 11px; }
+.dd-plan-section { width: min(1220px, calc(100% - 40px)); margin: 0 auto 28px; }
+.dd-plan-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr)); gap: 12px; margin: 18px 0 22px; }
+.dd-plan-controls .field-block:first-child { grid-column: 1 / -1; max-width: 260px; }
+.dd-plan-views { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px,1fr)); gap: 18px; }
+.dd-beam { stroke: #4d5e64; stroke-width: 1.4; }
+.dd-wing { stroke: var(--amber); stroke-width: 3; stroke-linecap: round; }
+.dd-column { fill: var(--ink); }
+.dd-axis-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 11px; font-weight: 800; }
+.dd-dim-label { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.dd-plan-caption { margin: 12px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .local-matrix-development { min-width: 0; padding: 16px; background: #f8fbfa; border: 1px solid #dce6e4; border-radius: 9px; }
 .local-matrix-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .local-matrix-title > div { display: grid; gap: 3px; }

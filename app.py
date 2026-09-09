@@ -63,6 +63,143 @@ analysis_ecc_x = 0.0
 analysis_ecc_y = 0.0
 analysis_view_level = None
 analysis_selected_axis_id = None
+
+# --- Planta de la Evaluación de Desempeño (DD, 1ACI0576) -------------------
+# Tabla 1 del enunciado: L1-L4 (m), H1-H2 (m) y ángulos Aº/Bº (°) por grupo.
+DD_GROUP_DATA = {
+    1: dict(l1=7.00, l2=8.40, l3=9.70, l4=8.80, h1=5.30, h2=3.50, a=85.20, b=7.00),
+    2: dict(l1=6.50, l2=7.80, l3=9.00, l4=8.10, h1=5.10, h2=3.50, a=84.20, b=6.70),
+    3: dict(l1=5.50, l2=6.60, l3=7.60, l4=6.90, h1=4.80, h2=3.50, a=83.80, b=4.00),
+    4: dict(l1=5.70, l2=6.80, l3=7.80, l4=7.10, h1=5.10, h2=3.50, a=83.70, b=5.40),
+    5: dict(l1=5.60, l2=6.70, l3=7.70, l4=7.00, h1=4.70, h2=3.50, a=83.60, b=4.60),
+    6: dict(l1=5.70, l2=6.80, l3=7.80, l4=7.10, h1=5.50, h2=3.50, a=84.60, b=6.00),
+    7: dict(l1=5.30, l2=6.40, l3=7.40, l4=6.60, h1=4.60, h2=3.50, a=85.70, b=6.00),
+    8: dict(l1=5.80, l2=7.00, l3=8.00, l4=7.30, h1=5.30, h2=3.50, a=83.80, b=6.90),
+    9: dict(l1=5.80, l2=7.00, l3=8.00, l4=7.30, h1=5.10, h2=3.50, a=85.20, b=4.10),
+    10: dict(l1=6.70, l2=8.00, l3=9.20, l4=8.40, h1=4.60, h2=3.50, a=85.50, b=4.70),
+}
+dd_l1, dd_l2, dd_l3, dd_l4 = 7.00, 8.40, 9.70, 8.80
+dd_angle_a, dd_angle_b = 85.20, 7.00
+
+
+def _dd_plan_geometry(l1: float, l2: float, l3: float, l4: float, angle_a: float, angle_b: float) -> dict:
+    """Geometría de la planta típica del DD: grilla 5x4 (ejes 1-5 / A-D) más
+    el ala en ángulo que une la esquina (eje 1, fila 4) con la esquina
+    (eje 5, fila 1), definida por los ángulos Aº (tramo empinado, medido
+    desde la horizontal) y Bº (tramo tendido, medido desde la horizontal),
+    tal como se muestran en la Tabla 1 del enunciado. El vértice donde se
+    juntan ambos tramos (eje "6" de la Figura 1) se calcula intersectando
+    las dos semirrectas.
+    """
+    xs = [0.0, l1, l1 + l2, l1 + 2 * l2, l1 + 2 * l2 + l1]
+    ys = [0.0, l3, l3 + l4, l3 + l4 + l3]
+    x1, x2, x3, x4, x5 = xs
+    y1, y2, y3, y4 = ys
+    a = radians(angle_a)
+    b = radians(angle_b)
+
+    det = cos(b) * (-sin(a)) - (-cos(a)) * sin(b)
+    if abs(det) < 1e-9:
+        peak = (x5, y4)
+    else:
+        bx, by = x5 - x1, y1 - y4
+        s = (bx * (-sin(a)) - (-cos(a)) * by) / det
+        peak = (x1 + s * cos(b), y4 + s * sin(b))
+
+    shallow = [(x1, y4)]
+    for xi in (x2, x3, x4, x5):
+        s = (xi - x1) / cos(b) if cos(b) else 0.0
+        shallow.append((xi, y4 + s * sin(b)))
+    shallow.append(peak)
+
+    steep = [(x5, y1)]
+    for yi in (y2, y3, y4):
+        t = (yi - y1) / sin(a) if sin(a) else 0.0
+        steep.append((x5 + t * cos(a), yi))
+    steep.append(peak)
+
+    return {"xs": xs, "ys": ys, "peak": peak, "shallow": shallow, "steep": steep}
+
+
+def _dd_plan_svg(geo: dict, mode: str) -> str:
+    xs, ys = geo["xs"], geo["ys"]
+    x1, x2, x3, x4, x5 = xs
+    y1, y2, y3, y4 = ys
+    peak = geo["peak"]
+
+    if mode == "roof":
+        col_xs, row_ys = [x2, x3, x4, x5], [y2, y3, y4]
+        nodes = [(x, y) for y in row_ys for x in col_xs]
+        extra_lines: list[list[tuple[float, float]]] = []
+        col_labels = [("2", x2), ("3", x3), ("4", x4), ("5", x5)]
+        row_labels = [("C", y2), ("B", y3), ("A", y4)]
+        top_gaps = [("L2", (x2 + x3) / 2), ("L2", (x3 + x4) / 2), ("L1", (x4 + x5) / 2)]
+        left_gaps = [("L4", (y2 + y3) / 2), ("L3", (y3 + y4) / 2)]
+        all_x, all_y = col_xs, row_ys
+    else:
+        col_xs, row_ys = xs, ys
+        nodes = [(x, y) for y in row_ys for x in col_xs]
+        extra_lines = [geo["shallow"], geo["steep"]]
+        nodes = nodes + geo["shallow"][1:] + geo["steep"][1:-1]
+        col_labels = [("1", x1), ("2", x2), ("3", x3), ("4", x4), ("5", x5), ("6", peak[0])]
+        row_labels = [("D", y1), ("C", y2), ("B", y3), ("A", y4)]
+        top_gaps = [("L1", (x1 + x2) / 2), ("L2", (x2 + x3) / 2), ("L2", (x3 + x4) / 2), ("L1", (x4 + x5) / 2)]
+        left_gaps = [("L3", (y1 + y2) / 2), ("L4", (y2 + y3) / 2), ("L3", (y3 + y4) / 2)]
+        all_x, all_y = xs + [peak[0]], ys + [peak[1]]
+
+    beams = [((col_xs[0], y), (col_xs[-1], y)) for y in row_ys]
+    beams += [((x, row_ys[0]), (x, row_ys[-1])) for x in col_xs]
+
+    margin = 3.0
+    min_x, max_x = min(all_x) - margin, max(all_x) + margin
+    min_y, max_y = min(all_y) - margin, max(all_y) + margin
+    width, height = max(max_x - min_x, 1.0), max(max_y - min_y, 1.0)
+    scale = min(520.0 / width, 380.0 / height)
+    pad_left, pad_top, pad_right, pad_bottom = 42.0, 40.0, 26.0, 30.0
+
+    def to_px(pt: tuple[float, float]) -> tuple[float, float]:
+        x, y = pt
+        return pad_left + (x - min_x) * scale, pad_top + (max_y - y) * scale
+
+    svg_w = pad_left + width * scale + pad_right
+    svg_h = pad_top + height * scale + pad_bottom
+
+    parts = [f'<svg viewBox="0 0 {svg_w:.0f} {svg_h:.0f}" role="img" aria-label="Planta del edificio (DD)">']
+    for p0, p1 in beams:
+        a0, a1 = to_px(p0), to_px(p1)
+        parts.append(f'<line x1="{a0[0]:.1f}" y1="{a0[1]:.1f}" x2="{a1[0]:.1f}" y2="{a1[1]:.1f}" class="dd-beam"/>')
+    for line in extra_lines:
+        for i in range(len(line) - 1):
+            a0, a1 = to_px(line[i]), to_px(line[i + 1])
+            parts.append(f'<line x1="{a0[0]:.1f}" y1="{a0[1]:.1f}" x2="{a1[0]:.1f}" y2="{a1[1]:.1f}" class="dd-wing"/>')
+    for label, xi in top_gaps:
+        px, _ = to_px((xi, max_y))
+        parts.append(f'<text x="{px:.1f}" y="{pad_top - 22:.1f}" class="dd-dim-label" text-anchor="middle">{escape(label)}</text>')
+    for label, yi in left_gaps:
+        _, py = to_px((min_x, yi))
+        parts.append(f'<text x="{pad_left - 30:.1f}" y="{py + 4:.1f}" class="dd-dim-label" text-anchor="middle">{escape(label)}</text>')
+    for pt in nodes:
+        px, py = to_px(pt)
+        parts.append(f'<rect x="{px - 4:.1f}" y="{py - 4:.1f}" width="8" height="8" class="dd-column"/>')
+    for label, xi in col_labels:
+        px, _ = to_px((xi, max_y))
+        parts.append(f'<text x="{px:.1f}" y="{pad_top - 8:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
+    for label, yi in row_labels:
+        _, py = to_px((min_x, yi))
+        parts.append(f'<text x="{pad_left - 12:.1f}" y="{py + 4:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_dd_plan() -> None:
+    geo = _dd_plan_geometry(dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b)
+    by_id("dd-plan-typical").innerHTML = _dd_plan_svg(geo, "typical")
+    by_id("dd-plan-roof").innerHTML = _dd_plan_svg(geo, "roof")
+    peak_x, peak_y = geo["peak"]
+    by_id("dd-plan-caption").textContent = (
+        f"Vértice del ala (eje 6) calculado por intersección de Aº y Bº: "
+        f"x = {peak_x:.2f} m, y = {peak_y:.2f} m respecto del eje A-1."
+    )
 groups = [
     ColumnGroup(
         id="c1",
@@ -2849,11 +2986,36 @@ def handle_click(event):
 def handle_input(event):
     global story_height, analysis_alpha, analysis_cm_x, analysis_cm_y
     global analysis_ecc_x, analysis_ecc_y
+    global dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b
     target = event.target
     field = target.getAttribute("data-field")
     if field is None:
         return
     field = str(field)
+    if field == "dd-l1":
+        dd_l1 = parse_number(target.value, dd_l1)
+        render_dd_plan()
+        return
+    if field == "dd-l2":
+        dd_l2 = parse_number(target.value, dd_l2)
+        render_dd_plan()
+        return
+    if field == "dd-l3":
+        dd_l3 = parse_number(target.value, dd_l3)
+        render_dd_plan()
+        return
+    if field == "dd-l4":
+        dd_l4 = parse_number(target.value, dd_l4)
+        render_dd_plan()
+        return
+    if field == "dd-a":
+        dd_angle_a = parse_number(target.value, dd_angle_a)
+        render_dd_plan()
+        return
+    if field == "dd-b":
+        dd_angle_b = parse_number(target.value, dd_angle_b)
+        render_dd_plan()
+        return
     if field == "story-height":
         story_height = parse_number(target.value)
         for level in load_levels:
@@ -2989,6 +3151,21 @@ def handle_change(event):
     if field is None:
         return
     field = str(field)
+    if field == "dd-group":
+        global dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b
+        raw = str(target.value)
+        if raw:
+            data = DD_GROUP_DATA[int(raw)]
+            dd_l1, dd_l2, dd_l3, dd_l4 = data["l1"], data["l2"], data["l3"], data["l4"]
+            dd_angle_a, dd_angle_b = data["a"], data["b"]
+            by_id("dd-l1").value = f"{dd_l1:.2f}"
+            by_id("dd-l2").value = f"{dd_l2:.2f}"
+            by_id("dd-l3").value = f"{dd_l3:.2f}"
+            by_id("dd-l4").value = f"{dd_l4:.2f}"
+            by_id("dd-a").value = f"{dd_angle_a:.2f}"
+            by_id("dd-b").value = f"{dd_angle_b:.2f}"
+        render_dd_plan()
+        return
     if field == "building-levels":
         resize_analysis_levels(int(parse_number(target.value, 2.0)))
         return
@@ -3086,6 +3263,7 @@ def initialize() -> None:
     render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
+    render_dd_plan()
     by_id("calculator").setAttribute("aria-busy", "false")
 
 

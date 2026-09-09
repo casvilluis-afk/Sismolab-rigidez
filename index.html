@@ -65,6 +65,71 @@
         </div>
       </section>
 
+      <section class="page-shell dd-plan-section" aria-labelledby="dd-plan-heading">
+        <div class="section-heading">
+          <span class="step-number">DD</span>
+          <div>
+            <h2 id="dd-plan-heading">Planta del edificio (Evaluación de Desempeño)</h2>
+            <p>Reconstrucción editable de la Fig. 1 y 2 del enunciado (1ACI0576, ciclo 2026-20). Ajusta L1–L4 y los ángulos Aº/Bº de tu grupo, o cárgalos desde la Tabla 1.</p>
+          </div>
+        </div>
+
+        <div class="dd-plan-controls">
+          <div class="field-block">
+            <label for="dd-group">Cargar datos del grupo</label>
+            <select id="dd-group" data-field="dd-group">
+              <option value="">— Personalizado —</option>
+              <option value="1">Grupo 1</option>
+              <option value="2">Grupo 2</option>
+              <option value="3">Grupo 3</option>
+              <option value="4">Grupo 4</option>
+              <option value="5">Grupo 5</option>
+              <option value="6">Grupo 6</option>
+              <option value="7">Grupo 7</option>
+              <option value="8">Grupo 8</option>
+              <option value="9">Grupo 9</option>
+              <option value="10">Grupo 10</option>
+            </select>
+          </div>
+          <div class="field-block">
+            <label for="dd-l1">L1</label>
+            <div class="input-with-unit"><input id="dd-l1" type="number" step="0.05" value="7.00" data-field="dd-l1"/><span>m</span></div>
+          </div>
+          <div class="field-block">
+            <label for="dd-l2">L2</label>
+            <div class="input-with-unit"><input id="dd-l2" type="number" step="0.05" value="8.40" data-field="dd-l2"/><span>m</span></div>
+          </div>
+          <div class="field-block">
+            <label for="dd-l3">L3</label>
+            <div class="input-with-unit"><input id="dd-l3" type="number" step="0.05" value="9.70" data-field="dd-l3"/><span>m</span></div>
+          </div>
+          <div class="field-block">
+            <label for="dd-l4">L4</label>
+            <div class="input-with-unit"><input id="dd-l4" type="number" step="0.05" value="8.80" data-field="dd-l4"/><span>m</span></div>
+          </div>
+          <div class="field-block">
+            <label for="dd-a">Aº</label>
+            <div class="input-with-unit"><input id="dd-a" type="number" step="0.1" value="85.20" data-field="dd-a"/><span>°</span></div>
+          </div>
+          <div class="field-block">
+            <label for="dd-b">Bº</label>
+            <div class="input-with-unit"><input id="dd-b" type="number" step="0.1" value="7.00" data-field="dd-b"/><span>°</span></div>
+          </div>
+        </div>
+
+        <div class="dd-plan-views">
+          <div class="analysis-plan-card">
+            <div class="subheading"><h3>Planta típica pisos 1 y 2</h3><span>Ejes 1–5 (A–D) + ala en ángulo</span></div>
+            <div id="dd-plan-typical"></div>
+          </div>
+          <div class="analysis-plan-card">
+            <div class="subheading"><h3>Planta piso 3 (techo)</h3><span>Ejes 2–5 (B–D), sin ala angular</span></div>
+            <div id="dd-plan-roof"></div>
+          </div>
+        </div>
+        <p id="dd-plan-caption" class="dd-plan-caption"></p>
+      </section>
+
       <div class="page-shell workspace-grid">
         <section class="input-panel" aria-labelledby="datos-heading">
           <div class="section-heading">
