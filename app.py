@@ -63,143 +63,10 @@ analysis_ecc_x = 0.0
 analysis_ecc_y = 0.0
 analysis_view_level = None
 analysis_selected_axis_id = None
-
-# --- Planta de la Evaluación de Desempeño (DD, 1ACI0576) -------------------
-# Tabla 1 del enunciado: L1-L4 (m), H1-H2 (m) y ángulos Aº/Bº (°) por grupo.
-DD_GROUP_DATA = {
-    1: dict(l1=7.00, l2=8.40, l3=9.70, l4=8.80, h1=5.30, h2=3.50, a=85.20, b=7.00),
-    2: dict(l1=6.50, l2=7.80, l3=9.00, l4=8.10, h1=5.10, h2=3.50, a=84.20, b=6.70),
-    3: dict(l1=5.50, l2=6.60, l3=7.60, l4=6.90, h1=4.80, h2=3.50, a=83.80, b=4.00),
-    4: dict(l1=5.70, l2=6.80, l3=7.80, l4=7.10, h1=5.10, h2=3.50, a=83.70, b=5.40),
-    5: dict(l1=5.60, l2=6.70, l3=7.70, l4=7.00, h1=4.70, h2=3.50, a=83.60, b=4.60),
-    6: dict(l1=5.70, l2=6.80, l3=7.80, l4=7.10, h1=5.50, h2=3.50, a=84.60, b=6.00),
-    7: dict(l1=5.30, l2=6.40, l3=7.40, l4=6.60, h1=4.60, h2=3.50, a=85.70, b=6.00),
-    8: dict(l1=5.80, l2=7.00, l3=8.00, l4=7.30, h1=5.30, h2=3.50, a=83.80, b=6.90),
-    9: dict(l1=5.80, l2=7.00, l3=8.00, l4=7.30, h1=5.10, h2=3.50, a=85.20, b=4.10),
-    10: dict(l1=6.70, l2=8.00, l3=9.20, l4=8.40, h1=4.60, h2=3.50, a=85.50, b=4.70),
-}
-dd_l1, dd_l2, dd_l3, dd_l4 = 7.00, 8.40, 9.70, 8.80
-dd_angle_a, dd_angle_b = 85.20, 7.00
-
-
-def _dd_plan_geometry(l1: float, l2: float, l3: float, l4: float, angle_a: float, angle_b: float) -> dict:
-    """Geometría de la planta típica del DD: grilla 5x4 (ejes 1-5 / A-D) más
-    el ala en ángulo que une la esquina (eje 1, fila 4) con la esquina
-    (eje 5, fila 1), definida por los ángulos Aº (tramo empinado, medido
-    desde la horizontal) y Bº (tramo tendido, medido desde la horizontal),
-    tal como se muestran en la Tabla 1 del enunciado. El vértice donde se
-    juntan ambos tramos (eje "6" de la Figura 1) se calcula intersectando
-    las dos semirrectas.
-    """
-    xs = [0.0, l1, l1 + l2, l1 + 2 * l2, l1 + 2 * l2 + l1]
-    ys = [0.0, l3, l3 + l4, l3 + l4 + l3]
-    x1, x2, x3, x4, x5 = xs
-    y1, y2, y3, y4 = ys
-    a = radians(angle_a)
-    b = radians(angle_b)
-
-    det = cos(b) * (-sin(a)) - (-cos(a)) * sin(b)
-    if abs(det) < 1e-9:
-        peak = (x5, y4)
-    else:
-        bx, by = x5 - x1, y1 - y4
-        s = (bx * (-sin(a)) - (-cos(a)) * by) / det
-        peak = (x1 + s * cos(b), y4 + s * sin(b))
-
-    shallow = [(x1, y4)]
-    for xi in (x2, x3, x4, x5):
-        s = (xi - x1) / cos(b) if cos(b) else 0.0
-        shallow.append((xi, y4 + s * sin(b)))
-    shallow.append(peak)
-
-    steep = [(x5, y1)]
-    for yi in (y2, y3, y4):
-        t = (yi - y1) / sin(a) if sin(a) else 0.0
-        steep.append((x5 + t * cos(a), yi))
-    steep.append(peak)
-
-    return {"xs": xs, "ys": ys, "peak": peak, "shallow": shallow, "steep": steep}
-
-
-def _dd_plan_svg(geo: dict, mode: str) -> str:
-    xs, ys = geo["xs"], geo["ys"]
-    x1, x2, x3, x4, x5 = xs
-    y1, y2, y3, y4 = ys
-    peak = geo["peak"]
-
-    if mode == "roof":
-        col_xs, row_ys = [x2, x3, x4, x5], [y2, y3, y4]
-        nodes = [(x, y) for y in row_ys for x in col_xs]
-        extra_lines: list[list[tuple[float, float]]] = []
-        col_labels = [("2", x2), ("3", x3), ("4", x4), ("5", x5)]
-        row_labels = [("C", y2), ("B", y3), ("A", y4)]
-        top_gaps = [("L2", (x2 + x3) / 2), ("L2", (x3 + x4) / 2), ("L1", (x4 + x5) / 2)]
-        left_gaps = [("L4", (y2 + y3) / 2), ("L3", (y3 + y4) / 2)]
-        all_x, all_y = col_xs, row_ys
-    else:
-        col_xs, row_ys = xs, ys
-        nodes = [(x, y) for y in row_ys for x in col_xs]
-        extra_lines = [geo["shallow"], geo["steep"]]
-        nodes = nodes + geo["shallow"][1:] + geo["steep"][1:-1]
-        col_labels = [("1", x1), ("2", x2), ("3", x3), ("4", x4), ("5", x5), ("6", peak[0])]
-        row_labels = [("D", y1), ("C", y2), ("B", y3), ("A", y4)]
-        top_gaps = [("L1", (x1 + x2) / 2), ("L2", (x2 + x3) / 2), ("L2", (x3 + x4) / 2), ("L1", (x4 + x5) / 2)]
-        left_gaps = [("L3", (y1 + y2) / 2), ("L4", (y2 + y3) / 2), ("L3", (y3 + y4) / 2)]
-        all_x, all_y = xs + [peak[0]], ys + [peak[1]]
-
-    beams = [((col_xs[0], y), (col_xs[-1], y)) for y in row_ys]
-    beams += [((x, row_ys[0]), (x, row_ys[-1])) for x in col_xs]
-
-    margin = 3.0
-    min_x, max_x = min(all_x) - margin, max(all_x) + margin
-    min_y, max_y = min(all_y) - margin, max(all_y) + margin
-    width, height = max(max_x - min_x, 1.0), max(max_y - min_y, 1.0)
-    scale = min(520.0 / width, 380.0 / height)
-    pad_left, pad_top, pad_right, pad_bottom = 42.0, 40.0, 26.0, 30.0
-
-    def to_px(pt: tuple[float, float]) -> tuple[float, float]:
-        x, y = pt
-        return pad_left + (x - min_x) * scale, pad_top + (max_y - y) * scale
-
-    svg_w = pad_left + width * scale + pad_right
-    svg_h = pad_top + height * scale + pad_bottom
-
-    parts = [f'<svg viewBox="0 0 {svg_w:.0f} {svg_h:.0f}" role="img" aria-label="Planta del edificio (DD)">']
-    for p0, p1 in beams:
-        a0, a1 = to_px(p0), to_px(p1)
-        parts.append(f'<line x1="{a0[0]:.1f}" y1="{a0[1]:.1f}" x2="{a1[0]:.1f}" y2="{a1[1]:.1f}" class="dd-beam"/>')
-    for line in extra_lines:
-        for i in range(len(line) - 1):
-            a0, a1 = to_px(line[i]), to_px(line[i + 1])
-            parts.append(f'<line x1="{a0[0]:.1f}" y1="{a0[1]:.1f}" x2="{a1[0]:.1f}" y2="{a1[1]:.1f}" class="dd-wing"/>')
-    for label, xi in top_gaps:
-        px, _ = to_px((xi, max_y))
-        parts.append(f'<text x="{px:.1f}" y="{pad_top - 22:.1f}" class="dd-dim-label" text-anchor="middle">{escape(label)}</text>')
-    for label, yi in left_gaps:
-        _, py = to_px((min_x, yi))
-        parts.append(f'<text x="{pad_left - 30:.1f}" y="{py + 4:.1f}" class="dd-dim-label" text-anchor="middle">{escape(label)}</text>')
-    for pt in nodes:
-        px, py = to_px(pt)
-        parts.append(f'<rect x="{px - 4:.1f}" y="{py - 4:.1f}" width="8" height="8" class="dd-column"/>')
-    for label, xi in col_labels:
-        px, _ = to_px((xi, max_y))
-        parts.append(f'<text x="{px:.1f}" y="{pad_top - 8:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
-    for label, yi in row_labels:
-        _, py = to_px((min_x, yi))
-        parts.append(f'<text x="{pad_left - 12:.1f}" y="{py + 4:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def render_dd_plan() -> None:
-    geo = _dd_plan_geometry(dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b)
-    by_id("dd-plan-typical").innerHTML = _dd_plan_svg(geo, "typical")
-    by_id("dd-plan-roof").innerHTML = _dd_plan_svg(geo, "roof")
-    peak_x, peak_y = geo["peak"]
-    by_id("dd-plan-caption").textContent = (
-        f"Vértice del ala (eje 6) calculado por intersección de Aº y Bº: "
-        f"x = {peak_x:.2f} m, y = {peak_y:.2f} m respecto del eje A-1."
-    )
+rigidity_plan_level = 0
+plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
+model_beam_width = 0.25
+model_beam_depth = 0.40
 groups = [
     ColumnGroup(
         id="c1",
@@ -926,6 +793,51 @@ def _grid_layout(cap_per_axis: int = 10) -> list[tuple[str, list[tuple[str, str,
     return [(axis, visible[axis], totals[axis]) for axis in order]
 
 
+def _layout_positions(count: int, outer: float, inner: float, scale: float) -> list[float]:
+    """Coordenadas acumuladas con luces exteriores e interiores diferenciadas."""
+
+    positions = [0.0]
+    span_count = max(0, count - 1)
+    for span_index in range(span_count):
+        length = outer if span_index in (0, span_count - 1) else inner
+        positions.append(positions[-1] + max(0.5, float(length)) * scale)
+    return positions
+
+
+def _rigidity_level_name(index: int) -> str:
+    if not load_levels:
+        return "Nivel 1"
+    safe_index = max(0, min(index, len(load_levels) - 1))
+    return "Techo / azotea" if load_levels[safe_index].is_roof else f"Nivel {safe_index + 1}"
+
+
+def render_rigidity_plan_selector() -> None:
+    global rigidity_plan_level
+
+    rigidity_plan_level = max(0, min(rigidity_plan_level, len(load_levels) - 1))
+    options = []
+    for index in range(len(load_levels)):
+        selected = " selected" if index == rigidity_plan_level else ""
+        options.append(f'<option value="{index}"{selected}>{_rigidity_level_name(index)}</option>')
+    by_id("rigidity-plan-level").innerHTML = "".join(options)
+    by_id("plan-view-level-title").textContent = _rigidity_level_name(rigidity_plan_level)
+
+
+def sync_model_geometry_to_levels() -> None:
+    """Transfiere las dimensiones generales de Rigidez al modelo por niveles."""
+
+    layout = _grid_layout()
+    axis_count = max(1, len(layout))
+    station_count = max(1, max((len(axis_units) for _, axis_units, _ in layout), default=1))
+    plan_x = _layout_positions(axis_count, plan_span_lengths[0], plan_span_lengths[1], 1.0)[-1]
+    plan_y = _layout_positions(station_count, plan_span_lengths[2], plan_span_lengths[3], 1.0)[-1]
+    plan_x = max(plan_span_lengths[0], plan_x)
+    plan_y = max(plan_span_lengths[2], plan_y)
+    for level in load_levels:
+        level.plan_x = plan_x
+        level.plan_y = plan_y
+
+
 def render_frame_diagram() -> None:
     """Dibuja el edificio completo sin cambiar la escala al variar sus niveles."""
     layout = _grid_layout()
@@ -938,6 +850,8 @@ def render_frame_diagram() -> None:
     maximum_levels = 12
     axis_count = len(layout)
     station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
+    axis_positions = _layout_positions(axis_count, plan_span_lengths[0], plan_span_lengths[1], 0.25)
+    station_positions = _layout_positions(station_count, plan_span_lengths[2], plan_span_lengths[3], 0.25)
     corner = (0.0, 0.0)
     ux = (64.0, -35.0)
     uy = (-48.0, -28.0)
@@ -945,8 +859,8 @@ def render_frame_diagram() -> None:
     # espacio para 12 niveles, por lo que el dibujo no hace zoom al cambiar N.
     story_step_px = 34.0
     uz = (0.0, -story_step_px)
-    min_grid_x, max_grid_x = -0.36, max(0, axis_count - 1) + 0.36
-    min_grid_y, max_grid_y = -0.36, max(0, station_count - 1) + 0.36
+    min_grid_x, max_grid_x = axis_positions[0] - 0.36, axis_positions[-1] + 0.36
+    min_grid_y, max_grid_y = station_positions[0] - 0.36, station_positions[-1] + 0.36
     parts: list[str] = []
     bbox: list[tuple[float, float]] = []
 
@@ -960,17 +874,20 @@ def render_frame_diagram() -> None:
     # El edificio se construye desde la base: columnas del piso y luego su losa.
     for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
         for station_index, (_material, _shape, _direction) in enumerate(axis_units):
-            base = point(axis_index, station_index, 0)
+            base = point(axis_positions[axis_index], station_positions[station_index], 0)
             parts.append(_iso_footing(*base))
 
     for level_index in range(1, total_levels + 1):
         for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
             for station_index, (material, _shape, _direction) in enumerate(axis_units):
-                base = point(axis_index, station_index, level_index - 1)
-                top = point(axis_index, station_index, level_index)
+                base = point(axis_positions[axis_index], station_positions[station_index], level_index - 1)
+                top = point(axis_positions[axis_index], station_positions[station_index], level_index)
+                segment_base_y = base[1] - (2.8 if level_index > 1 else 0.0)
+                segment_top_y = top[1] + 2.8
                 parts.append(
-                    f'<line class="{_material_class(material)}" x1="{base[0]:.1f}" y1="{base[1]:.1f}" '
-                    f'x2="{top[0]:.1f}" y2="{top[1]:.1f}"/>'
+                    f'<line class="{_material_class(material)} iso-column-segment" '
+                    f'x1="{base[0]:.1f}" y1="{segment_base_y:.1f}" '
+                    f'x2="{top[0]:.1f}" y2="{segment_top_y:.1f}"/>'
                 )
 
         slab = [
@@ -988,44 +905,55 @@ def render_frame_diagram() -> None:
         parts.append(
             f'<text class="iso-level-label" x="{level_edge[0] + 11:.1f}" y="{level_edge[1] + 13:.1f}">{level_name}</text>'
         )
+        if level_index < total_levels:
+            for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
+                for station_index, (_material, _shape, _direction) in enumerate(axis_units):
+                    joint = point(axis_positions[axis_index], station_positions[station_index], level_index)
+                    parts.append(
+                        f'<circle class="iso-column-joint" cx="{joint[0]:.1f}" cy="{joint[1]:.1f}" r="2.8"/>'
+                    )
 
     top_level = total_levels
 
     # Grilla, nombres de ejes y secciones sobre la última losa.
     for axis_index in range(axis_count):
-        start = point(axis_index, min_grid_y, top_level)
-        end = point(axis_index, max_grid_y, top_level)
+        start = point(axis_positions[axis_index], min_grid_y, top_level)
+        end = point(axis_positions[axis_index], max_grid_y, top_level)
         parts.append(
             f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
             f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
         )
     for station_index in range(station_count):
-        start = point(min_grid_x, station_index, top_level)
-        end = point(max_grid_x, station_index, top_level)
+        start = point(min_grid_x, station_positions[station_index], top_level)
+        end = point(max_grid_x, station_positions[station_index], top_level)
         parts.append(
             f'<line class="iso-grid-line" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
             f'x2="{end[0]:.1f}" y2="{end[1]:.1f}"/>'
         )
 
     for axis_index, (axis, axis_units, axis_total) in enumerate(layout):
-        label_point = point(axis_index, min_grid_y - 0.34, top_level)
+        label_point = point(axis_positions[axis_index], min_grid_y - 0.34, top_level)
         parts.append(
             f'<text class="iso-grid-label" x="{label_point[0]:.1f}" y="{label_point[1] - 5:.1f}" '
             f'text-anchor="middle">{escape(_display_axis(axis))}</text>'
         )
         for station_index, (material, shape, _direction) in enumerate(axis_units):
-            top = point(axis_index, station_index, top_level)
+            top = point(axis_positions[axis_index], station_positions[station_index], top_level)
             parts.append(_iso_shape_marker(top, material, shape, ux, uy))
         hidden_count = axis_total - len(axis_units)
         if hidden_count > 0:
-            overflow_point = point(axis_index, max(0, len(axis_units) - 1), top_level + 0.36)
+            overflow_point = point(
+                axis_positions[axis_index],
+                station_positions[max(0, len(axis_units) - 1)],
+                top_level + 0.36,
+            )
             parts.append(
                 f'<text class="iso-overflow" x="{overflow_point[0]:.1f}" y="{overflow_point[1]:.1f}" '
                 f'text-anchor="middle">+{hidden_count}</text>'
             )
 
     for station_index in range(station_count):
-        station_point = point(min_grid_x - 0.28, station_index, top_level)
+        station_point = point(min_grid_x - 0.28, station_positions[station_index], top_level)
         station = chr(65 + station_index)
         parts.append(
             f'<text class="iso-station-label" x="{station_point[0]:.1f}" y="{station_point[1]:.1f}" '
@@ -1102,39 +1030,59 @@ def render_frame_diagram() -> None:
 
 
 def render_plan_diagram() -> None:
-    """Dibuja una planta de ejes: cada grupo aparece sobre la línea indicada."""
+    """Dibuja una sola planta y permite alternar el nivel que se está revisando."""
+    render_rigidity_plan_selector()
     layout = _grid_layout()
     if not layout:
         by_id("frame-diagram-plan").innerHTML = ""
         by_id("plan-caption").textContent = "Añade un grupo para generar la planta."
         return
 
-    spacing_x, spacing_y = 72.0, 56.0
     axis_count = len(layout)
     station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
-    width = max(0, axis_count - 1) * spacing_x
-    height = max(0, station_count - 1) * spacing_y
+    x_positions = _layout_positions(axis_count, plan_span_lengths[0], plan_span_lengths[1], 18.0)
+    y_positions = _layout_positions(station_count, plan_span_lengths[2], plan_span_lengths[3], 18.0)
+    width = x_positions[-1]
+    height = y_positions[-1]
     parts: list[str] = []
 
     # Retícula: ejes estructurales verticales y estaciones A, B, C horizontales.
     for axis_index, (axis, _axis_units, _axis_total) in enumerate(layout):
-        x = axis_index * spacing_x
+        x = x_positions[axis_index]
         parts.append(f'<line class="plan-axis-line" x1="{x:.1f}" y1="-18" x2="{x:.1f}" y2="{height + 18:.1f}"/>')
         parts.append(
             f'<text class="plan-grid-label" x="{x:.1f}" y="{height + 39:.1f}" text-anchor="middle">'
             f'{escape(_display_axis(axis))}</text>'
         )
     for station_index in range(station_count):
-        y = station_index * spacing_y
+        y = y_positions[station_index]
         parts.append(f'<line class="plan-station-line" x1="-18" y1="{y:.1f}" x2="{width + 18:.1f}" y2="{y:.1f}"/>')
         parts.append(
             f'<text class="plan-station-label" x="-29" y="{y + 4:.1f}" text-anchor="middle">{chr(65 + station_index)}</text>'
         )
 
+    # Cotas de luces: exteriores L1/L3 e interiores L2/L4.
+    for span_index in range(max(0, axis_count - 1)):
+        is_outer = span_index in (0, axis_count - 2)
+        length_index = 0 if is_outer else 1
+        midpoint = (x_positions[span_index] + x_positions[span_index + 1]) / 2.0
+        parts.append(
+            f'<text class="plan-span-label" x="{midpoint:.1f}" y="-31" text-anchor="middle">'
+            f'L{length_index + 1} = {format_number(plan_span_lengths[length_index], 2)} m</text>'
+        )
+    for span_index in range(max(0, station_count - 1)):
+        is_outer = span_index in (0, station_count - 2)
+        length_index = 2 if is_outer else 3
+        midpoint = (y_positions[span_index] + y_positions[span_index + 1]) / 2.0
+        parts.append(
+            f'<text class="plan-span-label" x="-67" y="{midpoint + 3:.1f}" text-anchor="end">'
+            f'L{length_index + 1} = {format_number(plan_span_lengths[length_index], 2)} m</text>'
+        )
+
     for axis_index, (_axis, axis_units, axis_total) in enumerate(layout):
-        x = axis_index * spacing_x
+        x = x_positions[axis_index]
         for station_index, (material, shape, _direction) in enumerate(axis_units):
-            y = station_index * spacing_y
+            y = y_positions[station_index]
             parts.append(_plan_marker(x, y, material, shape))
         hidden_count = axis_total - len(axis_units)
         if hidden_count > 0:
@@ -1154,7 +1102,7 @@ def render_plan_diagram() -> None:
     )
     parts.append('<text class="plan-axis-label-y" x="-47" y="-43">Y</text>')
 
-    min_x, min_y = -72.0, -60.0
+    min_x, min_y = -112.0, -60.0
     max_x, max_y = max(width + 92.0, 165.0), arrow_y + 28.0
     svg = (
         f'<svg viewBox="{min_x:.1f} {min_y:.1f} {max_x - min_x:.1f} {max_y - min_y:.1f}" '
@@ -1169,7 +1117,8 @@ def render_plan_diagram() -> None:
     by_id("frame-diagram-plan").innerHTML = svg
     axis_names = ", ".join(_display_axis(axis) for axis, _, _ in layout)
     by_id("plan-caption").textContent = (
-        f"Retícula activa: {axis_names}. Las columnas se reparten en estaciones A, B, C…"
+        f"{_rigidity_level_name(rigidity_plan_level)} · retícula activa: {axis_names}. "
+        "La planta estructural se repite inicialmente en todos los niveles."
     )
 
 
@@ -1259,6 +1208,13 @@ def render_analysis_inputs() -> None:
             """
         )
     by_id("analysis-frame-list").innerHTML = "".join(frame_rows)
+
+
+def render_model_geometry_inputs() -> None:
+    for index, length in enumerate(plan_span_lengths):
+        by_id(f"plan-length-{index + 1}").value = input_number(length)
+    by_id("beam-section-width").value = input_number(model_beam_width)
+    by_id("beam-section-depth").value = input_number(model_beam_depth)
 
 
 def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
@@ -2575,7 +2531,7 @@ def render_loads_results() -> None:
 def configure_building_levels(levels: int, render: bool = True) -> None:
     """Mantiene una sola cantidad de niveles para Rigidez, Metrado y Análisis."""
 
-    global next_load_level_number, analysis_level_count
+    global next_load_level_number, analysis_level_count, rigidity_plan_level
     global analysis_heights, analysis_forces
     global analysis_stiffness_x, analysis_stiffness_y
 
@@ -2622,6 +2578,8 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
                 height=story_height,
                 is_roof=False,
                 use_key=loads_use_preset,
+                beam_width=model_beam_width,
+                beam_depth=model_beam_depth,
                 center_x=reference.center_x,
                 center_y=reference.center_y,
                 plan_x=reference.plan_x,
@@ -2639,9 +2597,11 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
     ]
     analysis_stiffness_x = [level.stiffness_x_override for level in load_levels]
     analysis_stiffness_y = [level.stiffness_y_override for level in load_levels]
+    rigidity_plan_level = max(0, min(rigidity_plan_level, target - 1))
 
     if render:
         render_frame_diagram()
+        render_plan_diagram()
         render_load_levels()
         render_loads_results()
         render_analysis_inputs()
@@ -2863,6 +2823,7 @@ def reset() -> None:
     global analysis_heights, analysis_forces, analysis_alpha
     global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
+    global rigidity_plan_level, plan_span_lengths, model_beam_width, model_beam_depth
     global load_levels, next_load_level_number
     global loads_use_preset, loads_zone, loads_soil, loads_category, loads_system
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
@@ -2879,6 +2840,9 @@ def reset() -> None:
     analysis_alpha = 0.0
     analysis_cm_x, analysis_cm_y = 2.5, 2.0
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
+    rigidity_plan_level = 0
+    plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
+    model_beam_width, model_beam_depth = 0.25, 0.40
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     load_levels = [
         LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False, use_key="vivienda"),
@@ -2895,6 +2859,7 @@ def reset() -> None:
     loads_nonparallel_systems = False
     loads_period_mode, loads_period_manual = "auto", 0.30
     by_id("story-height").value = "3"
+    render_model_geometry_inputs()
     render_unit_toggle()
     render_groups()
     render_results()
@@ -2986,35 +2951,31 @@ def handle_click(event):
 def handle_input(event):
     global story_height, analysis_alpha, analysis_cm_x, analysis_cm_y
     global analysis_ecc_x, analysis_ecc_y
-    global dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b
+    global model_beam_width, model_beam_depth
     target = event.target
     field = target.getAttribute("data-field")
     if field is None:
         return
     field = str(field)
-    if field == "dd-l1":
-        dd_l1 = parse_number(target.value, dd_l1)
-        render_dd_plan()
+    if field == "plan-length":
+        index = int(str(target.getAttribute("data-index")))
+        plan_span_lengths[index] = max(0.5, parse_number(target.value, plan_span_lengths[index]))
+        sync_model_geometry_to_levels()
+        render_frame_diagram()
+        render_plan_diagram()
+        render_loads_results()
+        render_analysis_results()
         return
-    if field == "dd-l2":
-        dd_l2 = parse_number(target.value, dd_l2)
-        render_dd_plan()
-        return
-    if field == "dd-l3":
-        dd_l3 = parse_number(target.value, dd_l3)
-        render_dd_plan()
-        return
-    if field == "dd-l4":
-        dd_l4 = parse_number(target.value, dd_l4)
-        render_dd_plan()
-        return
-    if field == "dd-a":
-        dd_angle_a = parse_number(target.value, dd_angle_a)
-        render_dd_plan()
-        return
-    if field == "dd-b":
-        dd_angle_b = parse_number(target.value, dd_angle_b)
-        render_dd_plan()
+    if field in ("beam-section-width", "beam-section-depth"):
+        value = max(0.05, parse_number(target.value, 0.25))
+        if field == "beam-section-width":
+            model_beam_width = value
+        else:
+            model_beam_depth = value
+        for level in load_levels:
+            level.beam_width = model_beam_width
+            level.beam_depth = model_beam_depth
+        render_loads_results()
         return
     if field == "story-height":
         story_height = parse_number(target.value)
@@ -3143,7 +3104,7 @@ def handle_input(event):
 
 @when("change", "#calculator")
 def handle_change(event):
-    global loads_use_preset
+    global loads_use_preset, rigidity_plan_level
     global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
     global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
     target = event.target
@@ -3151,23 +3112,12 @@ def handle_change(event):
     if field is None:
         return
     field = str(field)
-    if field == "dd-group":
-        global dd_l1, dd_l2, dd_l3, dd_l4, dd_angle_a, dd_angle_b
-        raw = str(target.value)
-        if raw:
-            data = DD_GROUP_DATA[int(raw)]
-            dd_l1, dd_l2, dd_l3, dd_l4 = data["l1"], data["l2"], data["l3"], data["l4"]
-            dd_angle_a, dd_angle_b = data["a"], data["b"]
-            by_id("dd-l1").value = f"{dd_l1:.2f}"
-            by_id("dd-l2").value = f"{dd_l2:.2f}"
-            by_id("dd-l3").value = f"{dd_l3:.2f}"
-            by_id("dd-l4").value = f"{dd_l4:.2f}"
-            by_id("dd-a").value = f"{dd_angle_a:.2f}"
-            by_id("dd-b").value = f"{dd_angle_b:.2f}"
-        render_dd_plan()
-        return
     if field == "building-levels":
         resize_analysis_levels(int(parse_number(target.value, 2.0)))
+        return
+    if field == "rigidity-plan-level":
+        rigidity_plan_level = max(0, min(int(parse_number(target.value)), len(load_levels) - 1))
+        render_plan_diagram()
         return
     if field == "analysis-deform-level":
         global analysis_view_level
@@ -3255,6 +3205,7 @@ def handle_change(event):
 
 
 def initialize() -> None:
+    render_model_geometry_inputs()
     render_unit_toggle()
     render_groups()
     render_results()
@@ -3263,7 +3214,6 @@ def initialize() -> None:
     render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
-    render_dd_plan()
     by_id("calculator").setAttribute("aria-busy", "false")
 
 
