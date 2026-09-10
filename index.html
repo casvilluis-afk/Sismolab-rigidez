@@ -107,9 +107,10 @@
                 <div class="field-block"><label for="plan-length-4">L₄</label><div class="input-with-unit"><input id="plan-length-4" type="number" min="0.5" max="30" step="0.1" value="5" data-field="plan-length" data-index="3" /><span>m</span></div></div>
               </div>
               <div class="plan-angle-fields">
-                <div class="field-block"><label for="plan-angle-a">Ángulo A</label><div class="input-with-unit"><input id="plan-angle-a" type="number" min="1" max="179" step="0.1" value="85.20" data-field="plan-angle-a" /><span>°</span></div></div>
-                <div class="field-block"><label for="plan-angle-b">Ángulo B</label><div class="input-with-unit"><input id="plan-angle-b" type="number" min="-45" max="45" step="0.1" value="7.00" data-field="plan-angle-b" /><span>°</span></div></div>
+                <div class="field-block"><label for="plan-angle-a">Ángulo A (opcional)</label><div class="input-with-unit"><input id="plan-angle-a" type="number" min="1" max="179" step="0.1" placeholder="Vacío" data-field="plan-angle-a" /><span>°</span></div></div>
+                <div class="field-block"><label for="plan-angle-b">Ángulo B (opcional)</label><div class="input-with-unit"><input id="plan-angle-b" type="number" min="-45" max="45" step="0.1" placeholder="Vacío" data-field="plan-angle-b" /><span>°</span></div></div>
               </div>
+              <small class="plan-angle-help">El ala naranja aparece únicamente cuando completas los dos ángulos.</small>
             </div>
             <div class="model-geometry-section beam-section-inputs">
               <div><strong>Sección típica de viga</strong><small>Se hereda en el metrado de todos los niveles.</small></div>
@@ -174,7 +175,7 @@
             <div class="iso-legend">
               <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Columna</span>
               <span class="iso-legend-item"><i class="plan-legend-line"></i>Viga / eje</span>
-              <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--wing"></i>Ala angular</span>
+              <span id="plan-wing-legend" class="iso-legend-item" hidden><i class="plan-legend-line plan-legend-line--wing"></i>Ala angular</span>
             </div>
           </div>
 

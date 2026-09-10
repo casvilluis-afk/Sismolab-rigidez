@@ -98,6 +98,7 @@ button { cursor: pointer; }
 .model-geometry-section > small, .beam-section-inputs > div:first-child small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .length-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin-top: 13px; }
 .plan-angle-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
+.plan-angle-help { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .length-fields .input-with-unit input, .plan-angle-fields .input-with-unit input, .beam-section-fields .input-with-unit input { padding-right: 34px; }
 .beam-section-inputs { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,.8fr); gap: 18px; align-items: end; background: #f6faf9; }
 .beam-section-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
@@ -198,6 +199,7 @@ select { padding: 8px 10px; }
 .iso-dim-label { fill: #607177; font-family: var(--mono); font-size: 12px; }
 .iso-legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; }
 .iso-legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.iso-legend-item[hidden] { display: none; }
 .iso-legend-dot { width: 10px; height: 10px; display: inline-block; border-radius: 50%; }
 .iso-legend-dot--concrete { background: var(--ink); }
 .iso-legend-dot--steel { background: var(--amber); }
@@ -217,9 +219,13 @@ select { padding: 8px 10px; }
 .plan-legend-line--wing { border-color: var(--amber); border-top-width: 3px; }
 .dd-beam { stroke: #4d5e64; stroke-width: 1.7; }
 .dd-wing { stroke: var(--amber); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
-.dd-column { fill: var(--ink); }
+.dd-column { stroke-width: 2.5; }
+.dd-column--concrete { fill: white; stroke: var(--ink); }
+.dd-column--steel { fill: #fdf1df; stroke: var(--amber); }
 .dd-axis-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 12px; font-weight: 800; }
+.dd-axis-label--wing { fill: #b9680d; }
 .dd-dim-label { fill: #65767b; font-family: var(--mono); font-size: 11px; font-weight: 700; }
+.dd-overflow { fill: var(--danger); font-family: var(--mono); font-size: 10px; font-weight: 800; }
 .plan-grid { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .plan-axis-line { stroke: #8bbab6; stroke-width: 1.5; stroke-dasharray: 5 4; }
 .plan-station-line { stroke: #c4cbdf; stroke-width: 1.5; stroke-dasharray: 5 4; }

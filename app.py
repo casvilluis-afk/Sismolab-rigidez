@@ -65,8 +65,8 @@ analysis_view_level = None
 analysis_selected_axis_id = None
 rigidity_plan_level = 0
 plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
-plan_angle_a = 85.20
-plan_angle_b = 7.00
+plan_angle_a = None
+plan_angle_b = None
 model_beam_width = 0.25
 model_beam_depth = 0.40
 groups = [
@@ -830,81 +830,92 @@ def sync_model_geometry_to_levels() -> None:
 
     geometry = _typical_plan_geometry()
     xs, ys = geometry["xs"], geometry["ys"]
+    all_x = xs + ([geometry["peak"][0]] if geometry["has_wing"] else [])
+    all_y = ys + ([geometry["peak"][1]] if geometry["has_wing"] else [])
+    plan_x = max(plan_span_lengths[0], max(all_x) - min(all_x))
+    plan_y = max(plan_span_lengths[2], max(all_y) - min(all_y))
     for level in load_levels:
-        if level.is_roof:
-            level.plan_x = xs[-1] - xs[1]
-            level.plan_y = ys[-1] - ys[1]
-        else:
-            all_x = xs + [geometry["peak"][0]]
-            all_y = ys + [geometry["peak"][1]]
-            level.plan_x = max(all_x) - min(all_x)
-            level.plan_y = max(all_y) - min(all_y)
+        level.plan_x = plan_x
+        level.plan_y = plan_y
 
 
 def _typical_plan_geometry() -> dict[str, object]:
-    """Retícula 5×4 con ala angular, según L1–L4 y los ángulos A/B."""
+    """Retícula típica 5×4; los grupos deciden qué columnas están activas."""
 
     l1, l2, l3, l4 = plan_span_lengths
+    layout = _grid_layout(cap_per_axis=4)
     xs = [0.0, l1, l1 + l2, l1 + 2.0 * l2, 2.0 * l1 + 2.0 * l2]
     ys = [0.0, l3, l3 + l4, 2.0 * l3 + l4]
-    x1, x2, x3, x4, x5 = xs
-    y1, y2, y3, y4 = ys
-    angle_a = radians(plan_angle_a)
-    angle_b = radians(plan_angle_b)
+    x1, x_last = xs[0], xs[-1]
+    y1, y_last = ys[0], ys[-1]
+    has_wing = plan_angle_a is not None and plan_angle_b is not None
+    if not has_wing:
+        return {
+            "layout": layout,
+            "xs": xs,
+            "ys": ys,
+            "peak": (x_last, y_last),
+            "shallow": [],
+            "steep": [],
+            "has_wing": False,
+        }
+
+    angle_a = radians(float(plan_angle_a))
+    angle_b = radians(float(plan_angle_b))
 
     determinant = cos(angle_b) * (-sin(angle_a)) - (-cos(angle_a)) * sin(angle_b)
     if abs(determinant) < 1e-9:
-        peak = (x5, y4)
+        peak = (x_last, y_last)
     else:
-        bx, by = x5 - x1, y1 - y4
+        bx, by = x_last - x1, y1 - y_last
         distance = (bx * (-sin(angle_a)) - (-cos(angle_a)) * by) / determinant
-        peak = (x1 + distance * cos(angle_b), y4 + distance * sin(angle_b))
+        peak = (x1 + distance * cos(angle_b), y_last + distance * sin(angle_b))
 
-    shallow = [(x1, y4)]
-    for x_value in (x2, x3, x4, x5):
+    shallow = [(x1, y_last)]
+    for x_value in xs[1:]:
         distance = (x_value - x1) / cos(angle_b) if abs(cos(angle_b)) > 1e-9 else 0.0
-        shallow.append((x_value, y4 + distance * sin(angle_b)))
+        shallow.append((x_value, y_last + distance * sin(angle_b)))
     shallow.append(peak)
 
-    steep = [(x5, y1)]
-    for y_value in (y2, y3, y4):
+    steep = [(x_last, y1)]
+    for y_value in ys[1:]:
         distance = (y_value - y1) / sin(angle_a) if abs(sin(angle_a)) > 1e-9 else 0.0
-        steep.append((x5 + distance * cos(angle_a), y_value))
+        steep.append((x_last + distance * cos(angle_a), y_value))
     steep.append(peak)
-    return {"xs": xs, "ys": ys, "peak": peak, "shallow": shallow, "steep": steep}
+    return {
+        "layout": layout,
+        "xs": xs,
+        "ys": ys,
+        "peak": peak,
+        "shallow": shallow,
+        "steep": steep,
+        "has_wing": True,
+    }
 
 
 def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
-    """Plano detallado de un piso típico o de la azotea en una sola caja."""
+    """Plano detallado que representa los mismos grupos de la vista 3D."""
 
     xs = list(geometry["xs"])
     ys = list(geometry["ys"])
-    x1, x2, x3, x4, x5 = xs
-    y1, y2, y3, y4 = ys
+    layout = list(geometry["layout"])
     peak = tuple(geometry["peak"])
-
-    if mode == "roof":
-        column_xs, row_ys = [x2, x3, x4, x5], [y2, y3, y4]
-        nodes = [(x_value, y_value) for y_value in row_ys for x_value in column_xs]
-        extra_lines: list[list[tuple[float, float]]] = []
-        column_labels = [("2", x2), ("3", x3), ("4", x4), ("5", x5)]
-        row_labels = [("C", y2), ("B", y3), ("A", y4)]
-        top_gaps = [("L2", (x2 + x3) / 2.0), ("L2", (x3 + x4) / 2.0), ("L1", (x4 + x5) / 2.0)]
-        left_gaps = [("L4", (y2 + y3) / 2.0), ("L3", (y3 + y4) / 2.0)]
-        all_x, all_y = column_xs, row_ys
-    else:
-        column_xs, row_ys = xs, ys
-        nodes = [(x_value, y_value) for y_value in row_ys for x_value in column_xs]
-        extra_lines = [list(geometry["shallow"]), list(geometry["steep"])]
-        nodes += list(geometry["shallow"])[1:] + list(geometry["steep"])[1:-1]
-        column_labels = [("1", x1), ("2", x2), ("3", x3), ("4", x4), ("5", x5), ("6", peak[0])]
-        row_labels = [("D", y1), ("C", y2), ("B", y3), ("A", y4)]
-        top_gaps = [("L1", (x1 + x2) / 2.0), ("L2", (x2 + x3) / 2.0), ("L2", (x3 + x4) / 2.0), ("L1", (x4 + x5) / 2.0)]
-        left_gaps = [("L3", (y1 + y2) / 2.0), ("L4", (y2 + y3) / 2.0), ("L3", (y3 + y4) / 2.0)]
-        all_x, all_y = xs + [peak[0]], ys + [peak[1]]
-
-    beams = [((column_xs[0], y_value), (column_xs[-1], y_value)) for y_value in row_ys]
-    beams += [((x_value, row_ys[0]), (x_value, row_ys[-1])) for x_value in column_xs]
+    has_wing = bool(geometry["has_wing"])
+    extra_lines = [list(geometry["shallow"]), list(geometry["steep"])] if has_wing else []
+    all_x = xs + ([peak[0]] if has_wing else [])
+    all_y = ys + ([peak[1]] if has_wing else [])
+    beams = [((xs[0], y_value), (xs[-1], y_value)) for y_value in ys]
+    beams += [((x_value, ys[0]), (x_value, ys[-1])) for x_value in xs]
+    column_labels = [(str(index + 1), x_value) for index, x_value in enumerate(xs)]
+    station_labels = [(chr(65 + index), y_value) for index, y_value in enumerate(reversed(ys))]
+    top_gaps = []
+    for span_index in range(max(0, len(xs) - 1)):
+        is_outer = span_index in (0, len(xs) - 2)
+        top_gaps.append(("L1" if is_outer else "L2", (xs[span_index] + xs[span_index + 1]) / 2.0))
+    left_gaps = []
+    for span_index in range(max(0, len(ys) - 1)):
+        is_outer = span_index in (0, len(ys) - 2)
+        left_gaps.append(("L3" if is_outer else "L4", (ys[span_index] + ys[span_index + 1]) / 2.0))
     margin = 3.0
     min_x, max_x = min(all_x) - margin, max(all_x) + margin
     min_y, max_y = min(all_y) - margin, max(all_y) + margin
@@ -939,13 +950,39 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
     for label, y_value in left_gaps:
         _, y_px = to_px((min_x, y_value))
         parts.append(f'<text x="{pad_left - 34:.1f}" y="{y_px + 4:.1f}" class="dd-dim-label" text-anchor="middle">{label}</text>')
-    for node in nodes:
-        x_px, y_px = to_px(node)
-        parts.append(f'<rect x="{x_px - 4:.1f}" y="{y_px - 4:.1f}" width="8" height="8" class="dd-column"/>')
+    # Mismo orden que en la vista isométrica: cada grupo ocupa su eje y sus
+    # unidades se distribuyen en estaciones A, B, C... de arriba hacia abajo.
+    for layout_index, (axis, axis_units, axis_total) in enumerate(layout):
+        clean_axis = str(axis).strip().lower()
+        if clean_axis.startswith("eje "):
+            clean_axis = clean_axis[4:].strip()
+        if clean_axis.isdigit() and 1 <= int(clean_axis) <= len(xs):
+            axis_index = int(clean_axis) - 1
+        else:
+            axis_index = min(layout_index, len(xs) - 1)
+        for station_index, (material, shape, _direction) in enumerate(axis_units):
+            if station_index >= len(ys):
+                break
+            x_px, y_px = to_px((xs[axis_index], ys[-1 - station_index]))
+            marker_class = f"dd-column dd-column--{material}"
+            if shape == "circle":
+                parts.append(f'<circle cx="{x_px:.1f}" cy="{y_px:.1f}" r="6" class="{marker_class}"/>')
+            else:
+                parts.append(f'<rect x="{x_px - 6:.1f}" y="{y_px - 6:.1f}" width="12" height="12" class="{marker_class}"/>')
+        hidden_count = max(0, axis_total - len(axis_units))
+        if hidden_count:
+            label_x, label_y = to_px((xs[axis_index], ys[0]))
+            parts.append(
+                f'<text x="{label_x:.1f}" y="{label_y + 20:.1f}" class="dd-overflow" '
+                f'text-anchor="middle">+{hidden_count}</text>'
+            )
     for label, x_value in column_labels:
         x_px, _ = to_px((x_value, max_y))
-        parts.append(f'<text x="{x_px:.1f}" y="{pad_top - 9:.1f}" class="dd-axis-label" text-anchor="middle">{label}</text>')
-    for label, y_value in row_labels:
+        parts.append(f'<text x="{x_px:.1f}" y="{pad_top - 9:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
+    if has_wing:
+        peak_px, _ = to_px(peak)
+        parts.append(f'<text x="{peak_px:.1f}" y="{pad_top - 9:.1f}" class="dd-axis-label dd-axis-label--wing" text-anchor="middle">ala</text>')
+    for label, y_value in station_labels:
         _, y_px = to_px((min_x, y_value))
         parts.append(f'<text x="{pad_left - 13:.1f}" y="{y_px + 4:.1f}" class="dd-axis-label" text-anchor="middle">{label}</text>')
     parts.append("</svg>")
@@ -1159,14 +1196,22 @@ def render_plan_diagram() -> None:
     selected_level = load_levels[rigidity_plan_level]
     mode = "roof" if selected_level.is_roof else "typical"
     by_id("frame-diagram-plan").innerHTML = _typical_plan_svg(geometry, mode)
-    peak_x, peak_y = geometry["peak"]
-    if mode == "roof":
-        detail = "Ejes 2–5 y filas B–D, sin ala angular."
+    layout = geometry["layout"]
+    total_columns = sum(axis_total for _axis, _axis_units, axis_total in layout)
+    axis_names = ", ".join(_display_axis(axis) for axis, _axis_units, _axis_total in layout)
+    if geometry["has_wing"]:
+        peak_x, peak_y = geometry["peak"]
+        wing_detail = (
+            f"Ala angular activa; vértice x={format_number(peak_x, 2)} m, "
+            f"y={format_number(peak_y, 2)} m."
+        )
+        by_id("plan-wing-legend").hidden = False
     else:
-        detail = "Ejes 1–5 y filas A–D, con el ala angular hasta el eje 6."
+        wing_detail = "Sin ala angular; completa ambos ángulos para incorporarla."
+        by_id("plan-wing-legend").hidden = True
     by_id("plan-caption").textContent = (
-        f"{_rigidity_level_name(rigidity_plan_level)} · {detail} "
-        f"Vértice del ala: x={format_number(peak_x, 2)} m, y={format_number(peak_y, 2)} m."
+        f"{_rigidity_level_name(rigidity_plan_level)} · {total_columns} columna(s) · "
+        f"{axis_names}. {wing_detail}"
     )
 
 
@@ -1261,8 +1306,8 @@ def render_analysis_inputs() -> None:
 def render_model_geometry_inputs() -> None:
     for index, length in enumerate(plan_span_lengths):
         by_id(f"plan-length-{index + 1}").value = input_number(length)
-    by_id("plan-angle-a").value = input_number(plan_angle_a)
-    by_id("plan-angle-b").value = input_number(plan_angle_b)
+    by_id("plan-angle-a").value = "" if plan_angle_a is None else input_number(plan_angle_a)
+    by_id("plan-angle-b").value = "" if plan_angle_b is None else input_number(plan_angle_b)
     by_id("beam-section-width").value = input_number(model_beam_width)
     by_id("beam-section-depth").value = input_number(model_beam_depth)
 
@@ -2893,7 +2938,7 @@ def reset() -> None:
     analysis_ecc_x, analysis_ecc_y = 0.0, 0.0
     rigidity_plan_level = 0
     plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
-    plan_angle_a, plan_angle_b = 85.20, 7.00
+    plan_angle_a, plan_angle_b = None, None
     model_beam_width, model_beam_depth = 0.25, 0.40
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     load_levels = [
@@ -3019,10 +3064,11 @@ def handle_input(event):
         render_analysis_results()
         return
     if field in ("plan-angle-a", "plan-angle-b"):
+        raw_value = str(target.value).strip()
         if field == "plan-angle-a":
-            plan_angle_a = max(1.0, min(179.0, parse_number(target.value, plan_angle_a)))
+            plan_angle_a = None if not raw_value else max(1.0, min(179.0, parse_number(raw_value, 85.2)))
         else:
-            plan_angle_b = max(-45.0, min(45.0, parse_number(target.value, plan_angle_b)))
+            plan_angle_b = None if not raw_value else max(-45.0, min(45.0, parse_number(raw_value, 7.0)))
         sync_model_geometry_to_levels()
         render_plan_diagram()
         render_loads_results()
