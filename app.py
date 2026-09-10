@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html import escape
-from math import cos, isfinite, pi, radians, sin
+from math import cos, hypot, isfinite, pi, radians, sin
 
 from pyscript import document, when
 
@@ -47,6 +48,19 @@ from loads import (
 )
 
 
+@dataclass
+class BeamMember:
+    """Viga dibujada entre dos nodos de la retícula típica."""
+
+    id: str
+    label: str
+    start_axis: int
+    start_station: int
+    end_axis: int
+    end_station: int
+    level_scope: str = "all"
+
+
 units = "SI"
 story_height = 3.0
 next_group_number = 2
@@ -69,6 +83,8 @@ plan_angle_a = None
 plan_angle_b = None
 model_beam_width = 0.25
 model_beam_depth = 0.40
+next_beam_number = 1
+beams: list[BeamMember] = []
 groups = [
     ColumnGroup(
         id="c1",
@@ -806,6 +822,143 @@ def _layout_positions(count: int, outer: float, inner: float, scale: float) -> l
     return positions
 
 
+def _fixed_grid_column_slots() -> list[tuple[str, list[tuple[str, str, str]], int]]:
+    """Ubica los grupos en los cinco ejes de la retícula compartida."""
+
+    slots: list[list[tuple[str, str, str]]] = [[] for _ in range(5)]
+    totals = [0] * 5
+    for layout_index, (axis, axis_units, axis_total) in enumerate(_grid_layout(cap_per_axis=4)):
+        clean_axis = str(axis).strip().lower()
+        if clean_axis.startswith("eje "):
+            clean_axis = clean_axis[4:].strip()
+        if clean_axis.isdigit() and 1 <= int(clean_axis) <= 5:
+            axis_index = int(clean_axis) - 1
+        else:
+            axis_index = min(layout_index, 4)
+        remaining = max(0, 4 - len(slots[axis_index]))
+        slots[axis_index].extend(axis_units[:remaining])
+        totals[axis_index] += axis_total
+    return [(str(index + 1), slots[index], totals[index]) for index in range(5)]
+
+
+def _fixed_plan_coordinates() -> tuple[list[float], list[float]]:
+    """Coordenadas reales de los ejes 1–5 y las estaciones A–D."""
+
+    l1, l2, l3, l4 = plan_span_lengths
+    xs = [0.0, l1, l1 + l2, l1 + 2.0 * l2, 2.0 * l1 + 2.0 * l2]
+    ys = [0.0, l3, l3 + l4, 2.0 * l3 + l4]
+    return xs, ys
+
+
+def _beam_is_active(beam: BeamMember, level_index: int) -> bool:
+    return beam.level_scope == "all" or beam.level_scope == str(level_index)
+
+
+def _beam_plan_points(beam: BeamMember) -> tuple[tuple[float, float], tuple[float, float]]:
+    xs, ys = _fixed_plan_coordinates()
+    start = (xs[beam.start_axis], ys[-1 - beam.start_station])
+    end = (xs[beam.end_axis], ys[-1 - beam.end_station])
+    return start, end
+
+
+def _beam_length(beam: BeamMember) -> float:
+    start, end = _beam_plan_points(beam)
+    return hypot(end[0] - start[0], end[1] - start[1])
+
+
+def get_beam(beam_id: str) -> BeamMember | None:
+    return next((beam for beam in beams if beam.id == beam_id), None)
+
+
+def sync_beams_to_load_levels() -> None:
+    """Envía cantidad y longitud equivalente al metrado de cada nivel."""
+
+    for level_index, level in enumerate(load_levels):
+        active_beams = [beam for beam in beams if _beam_is_active(beam, level_index)]
+        level.beam_count = len(active_beams)
+        level.beam_width = model_beam_width
+        level.beam_depth = model_beam_depth
+        if active_beams:
+            lengths = [_beam_length(beam) for beam in active_beams]
+            total_length = sum(lengths)
+            level.beam_length = total_length / len(active_beams)
+            if total_length > 1e-9:
+                centroids = []
+                for beam in active_beams:
+                    start, end = _beam_plan_points(beam)
+                    centroids.append(((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0))
+                level.beam_center_x = sum(
+                    lengths[index] * centroids[index][0] for index in range(len(active_beams))
+                ) / total_length
+                level.beam_center_y = sum(
+                    lengths[index] * centroids[index][1] for index in range(len(active_beams))
+                ) / total_length
+
+
+def render_beams() -> None:
+    """Construye el editor de vigas y sus opciones de nodo y nivel."""
+
+    axis_options = [(index, f"Eje {index + 1}") for index in range(5)]
+    station_options = [(index, chr(65 + index)) for index in range(4)]
+    cards = []
+    for beam in beams:
+        beam_length = _beam_length(beam)
+        card_class = "beam-model-card is-invalid" if beam_length <= 1e-9 else "beam-model-card"
+        beam_note = (
+            "Selecciona dos nodos distintos."
+            if beam_length <= 1e-9
+            else f"Sección b × h: {format_number(model_beam_width, 2)} × {format_number(model_beam_depth, 2)} m"
+        )
+        start_axis_options = "".join(
+            f'<option value="{value}"{" selected" if value == beam.start_axis else ""}>{label}</option>'
+            for value, label in axis_options
+        )
+        end_axis_options = "".join(
+            f'<option value="{value}"{" selected" if value == beam.end_axis else ""}>{label}</option>'
+            for value, label in axis_options
+        )
+        start_station_options = "".join(
+            f'<option value="{value}"{" selected" if value == beam.start_station else ""}>{label}</option>'
+            for value, label in station_options
+        )
+        end_station_options = "".join(
+            f'<option value="{value}"{" selected" if value == beam.end_station else ""}>{label}</option>'
+            for value, label in station_options
+        )
+        scope_options = [
+            f'<option value="all"{" selected" if beam.level_scope == "all" else ""}>Todos los niveles</option>'
+        ]
+        for level_index in range(len(load_levels)):
+            selected = " selected" if beam.level_scope == str(level_index) else ""
+            scope_options.append(
+                f'<option value="{level_index}"{selected}>{_rigidity_level_name(level_index)}</option>'
+            )
+        cards.append(
+            f"""
+            <article class="{card_class}">
+              <div class="beam-model-card__head">
+                <span class="beam-code">{escape(beam.label)}</span>
+                <strong>{format_number(beam_length, 2)} m</strong>
+                <button type="button" class="button remove-button" aria-label="Eliminar {escape(beam.label)}" data-action="remove-beam" data-id="{beam.id}">×</button>
+              </div>
+              <div class="beam-model-fields">
+                <div class="field-block"><label for="beam-start-axis-{beam.id}">Inicio · eje</label><select id="beam-start-axis-{beam.id}" data-field="beam-start-axis" data-id="{beam.id}">{start_axis_options}</select></div>
+                <div class="field-block"><label for="beam-start-station-{beam.id}">Inicio · línea</label><select id="beam-start-station-{beam.id}" data-field="beam-start-station" data-id="{beam.id}">{start_station_options}</select></div>
+                <div class="field-block"><label for="beam-end-axis-{beam.id}">Fin · eje</label><select id="beam-end-axis-{beam.id}" data-field="beam-end-axis" data-id="{beam.id}">{end_axis_options}</select></div>
+                <div class="field-block"><label for="beam-end-station-{beam.id}">Fin · línea</label><select id="beam-end-station-{beam.id}" data-field="beam-end-station" data-id="{beam.id}">{end_station_options}</select></div>
+                <div class="field-block beam-level-field"><label for="beam-level-{beam.id}">Dibujar en</label><select id="beam-level-{beam.id}" data-field="beam-level" data-id="{beam.id}">{"".join(scope_options)}</select></div>
+              </div>
+              <p class="beam-model-meta">{beam_note}</p>
+            </article>
+            """
+        )
+    by_id("beam-list").innerHTML = "".join(cards) if cards else (
+        '<p class="beam-empty">Aún no hay vigas modeladas. Añade una y selecciona sus dos nodos.</p>'
+    )
+    by_id("beam-count").textContent = f"{len(beams)}/24"
+    by_id("add-beam").disabled = len(beams) >= 24
+
+
 def _rigidity_level_name(index: int) -> str:
     if not load_levels:
         return "Nivel 1"
@@ -842,10 +995,8 @@ def sync_model_geometry_to_levels() -> None:
 def _typical_plan_geometry() -> dict[str, object]:
     """Retícula típica 5×4; los grupos deciden qué columnas están activas."""
 
-    l1, l2, l3, l4 = plan_span_lengths
-    layout = _grid_layout(cap_per_axis=4)
-    xs = [0.0, l1, l1 + l2, l1 + 2.0 * l2, 2.0 * l1 + 2.0 * l2]
-    ys = [0.0, l3, l3 + l4, 2.0 * l3 + l4]
+    layout = _fixed_grid_column_slots()
+    xs, ys = _fixed_plan_coordinates()
     x1, x_last = xs[0], xs[-1]
     y1, y_last = ys[0], ys[-1]
     has_wing = plan_angle_a is not None and plan_angle_b is not None
@@ -904,8 +1055,8 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
     extra_lines = [list(geometry["shallow"]), list(geometry["steep"])] if has_wing else []
     all_x = xs + ([peak[0]] if has_wing else [])
     all_y = ys + ([peak[1]] if has_wing else [])
-    beams = [((xs[0], y_value), (xs[-1], y_value)) for y_value in ys]
-    beams += [((x_value, ys[0]), (x_value, ys[-1])) for x_value in xs]
+    guide_lines = [((xs[0], y_value), (xs[-1], y_value)) for y_value in ys]
+    guide_lines += [((x_value, ys[0]), (x_value, ys[-1])) for x_value in xs]
     column_labels = [(str(index + 1), x_value) for index, x_value in enumerate(xs)]
     station_labels = [(chr(65 + index), y_value) for index, y_value in enumerate(reversed(ys))]
     top_gaps = []
@@ -933,10 +1084,10 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
         f'<svg viewBox="0 0 {svg_width:.0f} {svg_height:.0f}" preserveAspectRatio="xMidYMid meet" '
         f'role="img" aria-label="Planta estructural de {_rigidity_level_name(rigidity_plan_level)}">'
     ]
-    for start, end in beams:
+    for start, end in guide_lines:
         start_px, end_px = to_px(start), to_px(end)
         parts.append(
-            f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" class="dd-beam"/>'
+            f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" class="dd-grid-beam"/>'
         )
     for line in extra_lines:
         for index in range(len(line) - 1):
@@ -944,6 +1095,20 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
             parts.append(
                 f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" class="dd-wing"/>'
             )
+    for beam in beams:
+        if not _beam_is_active(beam, rigidity_plan_level):
+            continue
+        beam_start, beam_end = _beam_plan_points(beam)
+        start_px, end_px = to_px(beam_start), to_px(beam_end)
+        beam_stroke = max(3.5, min(8.0, 3.0 + model_beam_depth * 5.0))
+        parts.append(
+            f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" '
+            f'class="dd-model-beam" style="stroke-width:{beam_stroke:.1f}px"/>'
+        )
+        parts.append(
+            f'<text x="{(start_px[0] + end_px[0]) / 2.0:.1f}" y="{(start_px[1] + end_px[1]) / 2.0 - 7:.1f}" '
+            f'class="dd-beam-label" text-anchor="middle">{escape(beam.label)}</text>'
+        )
     for label, x_value in top_gaps:
         x_px, _ = to_px((x_value, max_y))
         parts.append(f'<text x="{x_px:.1f}" y="{pad_top - 25:.1f}" class="dd-dim-label" text-anchor="middle">{label}</text>')
@@ -952,14 +1117,7 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
         parts.append(f'<text x="{pad_left - 34:.1f}" y="{y_px + 4:.1f}" class="dd-dim-label" text-anchor="middle">{label}</text>')
     # Mismo orden que en la vista isométrica: cada grupo ocupa su eje y sus
     # unidades se distribuyen en estaciones A, B, C... de arriba hacia abajo.
-    for layout_index, (axis, axis_units, axis_total) in enumerate(layout):
-        clean_axis = str(axis).strip().lower()
-        if clean_axis.startswith("eje "):
-            clean_axis = clean_axis[4:].strip()
-        if clean_axis.isdigit() and 1 <= int(clean_axis) <= len(xs):
-            axis_index = int(clean_axis) - 1
-        else:
-            axis_index = min(layout_index, len(xs) - 1)
+    for axis_index, (_axis, axis_units, axis_total) in enumerate(layout):
         for station_index, (material, shape, _direction) in enumerate(axis_units):
             if station_index >= len(ys):
                 break
@@ -991,18 +1149,19 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
 
 def render_frame_diagram() -> None:
     """Dibuja el edificio completo sin cambiar la escala al variar sus niveles."""
-    layout = _grid_layout()
-    if not layout:
+    layout = _fixed_grid_column_slots()
+    if not groups:
         by_id("frame-diagram-3d").innerHTML = ""
         by_id("diagram-caption").textContent = "Añade un grupo para generar la retícula."
         return
 
     total_levels = max(1, min(12, len(load_levels)))
     maximum_levels = 12
-    axis_count = len(layout)
-    station_count = max(1, max(len(axis_units) for _, axis_units, _ in layout))
-    axis_positions = _layout_positions(axis_count, plan_span_lengths[0], plan_span_lengths[1], 0.25)
-    station_positions = _layout_positions(station_count, plan_span_lengths[2], plan_span_lengths[3], 0.25)
+    axis_count = 5
+    station_count = 4
+    plan_xs, plan_ys = _fixed_plan_coordinates()
+    axis_positions = [value * 0.25 for value in plan_xs]
+    station_positions = [value * 0.25 for value in plan_ys]
     corner = (0.0, 0.0)
     ux = (64.0, -35.0)
     uy = (-48.0, -28.0)
@@ -1053,6 +1212,17 @@ def render_frame_diagram() -> None:
         slab_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in slab)
         slab_class = "iso-slab iso-slab--top" if level_index == total_levels else "iso-slab iso-slab--floor"
         parts.append(f'<polygon class="{slab_class}" points="{slab_points}"/>')
+
+        for beam in beams:
+            if not _beam_is_active(beam, level_index - 1):
+                continue
+            start = point(axis_positions[beam.start_axis], station_positions[beam.start_station], level_index)
+            end = point(axis_positions[beam.end_axis], station_positions[beam.end_station], level_index)
+            beam_stroke = max(3.0, min(7.0, 2.5 + model_beam_depth * 4.0))
+            parts.append(
+                f'<line class="iso-model-beam" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
+                f'x2="{end[0]:.1f}" y2="{end[1]:.1f}" style="stroke-width:{beam_stroke:.1f}px"/>'
+            )
 
         level_edge = point(max_grid_x, min_grid_y, level_index)
         level_name = "Azotea" if level_index == total_levels else f"N{level_index}"
@@ -1182,9 +1352,11 @@ def render_frame_diagram() -> None:
         + "</svg>"
     )
     by_id("frame-diagram-3d").innerHTML = svg
+    active_axis_count = sum(1 for _axis, _axis_units, axis_total in layout if axis_total > 0)
+    active_beam_count = sum(1 for beam in beams if beam.level_scope == "all")
     by_id("diagram-caption").textContent = (
-        f"{total_levels} nivel(es) · {total_columns} columna(s) por nivel · {axis_count} eje(s) estructural(es) · "
-        "columnas separadas por entrepiso."
+        f"{total_levels} nivel(es) · {total_columns} columna(s) por nivel · {active_axis_count} eje(s) activos · "
+        f"{len(beams)} viga(s) definida(s), {active_beam_count} repetida(s) en todos los niveles."
     )
 
 
@@ -1197,8 +1369,9 @@ def render_plan_diagram() -> None:
     mode = "roof" if selected_level.is_roof else "typical"
     by_id("frame-diagram-plan").innerHTML = _typical_plan_svg(geometry, mode)
     layout = geometry["layout"]
-    total_columns = sum(axis_total for _axis, _axis_units, axis_total in layout)
-    axis_names = ", ".join(_display_axis(axis) for axis, _axis_units, _axis_total in layout)
+    active_layout = [item for item in layout if item[2] > 0]
+    total_columns = sum(axis_total for _axis, _axis_units, axis_total in active_layout)
+    axis_names = ", ".join(_display_axis(axis) for axis, _axis_units, _axis_total in active_layout)
     if geometry["has_wing"]:
         peak_x, peak_y = geometry["peak"]
         wing_detail = (
@@ -2693,8 +2866,13 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
     analysis_stiffness_x = [level.stiffness_x_override for level in load_levels]
     analysis_stiffness_y = [level.stiffness_y_override for level in load_levels]
     rigidity_plan_level = max(0, min(rigidity_plan_level, target - 1))
+    for beam in beams:
+        if beam.level_scope != "all":
+            beam.level_scope = str(max(0, min(int(beam.level_scope), target - 1)))
+    sync_beams_to_load_levels()
 
     if render:
+        render_beams()
         render_frame_diagram()
         render_plan_diagram()
         render_load_levels()
@@ -2851,6 +3029,7 @@ def load_analysis_example() -> None:
     next_group_number = 5
     render_unit_toggle()
     render_groups()
+    render_beams()
     render_results()
     render_load_levels()
     render_loads_results()
@@ -2913,6 +3092,33 @@ def add_group() -> None:
     render_analysis_results()
 
 
+def add_beam() -> None:
+    global next_beam_number
+
+    if len(beams) >= 24:
+        return
+    beam_index = len(beams)
+    start_axis = beam_index % 4
+    station = (beam_index // 4) % 4
+    beams.append(
+        BeamMember(
+            id=f"b{next_beam_number}",
+            label=f"V-{next_beam_number:02d}",
+            start_axis=start_axis,
+            start_station=station,
+            end_axis=start_axis + 1,
+            end_station=station,
+            level_scope="all",
+        )
+    )
+    next_beam_number += 1
+    sync_beams_to_load_levels()
+    render_beams()
+    render_results()
+    render_loads_results()
+    render_analysis_results()
+
+
 def reset() -> None:
     global units, story_height, groups, next_group_number, analysis_level_count
     global analysis_heights, analysis_forces, analysis_alpha
@@ -2920,6 +3126,7 @@ def reset() -> None:
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     global rigidity_plan_level, plan_span_lengths, plan_angle_a, plan_angle_b
     global model_beam_width, model_beam_depth
+    global beams, next_beam_number
     global load_levels, next_load_level_number
     global loads_use_preset, loads_zone, loads_soil, loads_category, loads_system
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
@@ -2940,6 +3147,7 @@ def reset() -> None:
     plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
     plan_angle_a, plan_angle_b = None, None
     model_beam_width, model_beam_depth = 0.25, 0.40
+    beams, next_beam_number = [], 1
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     load_levels = [
         LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False, use_key="vivienda"),
@@ -2956,7 +3164,9 @@ def reset() -> None:
     loads_nonparallel_systems = False
     loads_period_mode, loads_period_manual = "auto", 0.30
     by_id("story-height").value = "3"
+    sync_beams_to_load_levels()
     render_model_geometry_inputs()
+    render_beams()
     render_unit_toggle()
     render_groups()
     render_results()
@@ -2984,6 +3194,16 @@ def handle_click(event):
         load_analysis_example()
     elif action == "add":
         add_group()
+    elif action == "add-beam":
+        add_beam()
+    elif action == "remove-beam":
+        beam_id = str(action_element.getAttribute("data-id"))
+        beams[:] = [beam for beam in beams if beam.id != beam_id]
+        sync_beams_to_load_levels()
+        render_beams()
+        render_results()
+        render_loads_results()
+        render_analysis_results()
     elif action == "reset":
         reset()
     elif action == "remove":
@@ -3058,6 +3278,8 @@ def handle_input(event):
         index = int(str(target.getAttribute("data-index")))
         plan_span_lengths[index] = max(0.5, parse_number(target.value, plan_span_lengths[index]))
         sync_model_geometry_to_levels()
+        sync_beams_to_load_levels()
+        render_beams()
         render_frame_diagram()
         render_plan_diagram()
         render_loads_results()
@@ -3080,9 +3302,10 @@ def handle_input(event):
             model_beam_width = value
         else:
             model_beam_depth = value
-        for level in load_levels:
-            level.beam_width = model_beam_width
-            level.beam_depth = model_beam_depth
+        sync_beams_to_load_levels()
+        render_beams()
+        render_frame_diagram()
+        render_plan_diagram()
         render_loads_results()
         return
     if field == "story-height":
@@ -3220,6 +3443,26 @@ def handle_change(event):
     if field is None:
         return
     field = str(field)
+    if field in ("beam-start-axis", "beam-start-station", "beam-end-axis", "beam-end-station", "beam-level"):
+        beam = get_beam(str(target.getAttribute("data-id")))
+        if beam is None:
+            return
+        if field == "beam-level":
+            beam.level_scope = str(target.value)
+        else:
+            attribute = {
+                "beam-start-axis": "start_axis",
+                "beam-start-station": "start_station",
+                "beam-end-axis": "end_axis",
+                "beam-end-station": "end_station",
+            }[field]
+            setattr(beam, attribute, int(parse_number(target.value)))
+        sync_beams_to_load_levels()
+        render_beams()
+        render_results()
+        render_loads_results()
+        render_analysis_results()
+        return
     if field == "building-levels":
         resize_analysis_levels(int(parse_number(target.value, 2.0)))
         return
@@ -3316,6 +3559,8 @@ def initialize() -> None:
     render_model_geometry_inputs()
     render_unit_toggle()
     render_groups()
+    sync_beams_to_load_levels()
+    render_beams()
     render_results()
     render_load_levels()
     render_loads_site_inputs()

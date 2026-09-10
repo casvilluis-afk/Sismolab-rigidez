@@ -122,11 +122,12 @@
           </section>
 
           <div class="axis-builder-guide" role="note" aria-label="Cómo dibujar la planta estructural">
-            <strong>Dibuja tu planta en tres pasos</strong>
+            <strong>Dibuja tu estructura en cuatro pasos</strong>
             <ol>
               <li><span>1</span>Añade un grupo de columnas.</li>
               <li><span>2</span>Escribe el eje: 1, 2, A, B…</li>
               <li><span>3</span>Ubícalo con X₀ e Y₀ y revisa la planta.</li>
+              <li><span>4</span>Añade vigas indicando sus nodos inicial y final.</li>
             </ol>
             <small>La distribución definida aquí se usa inicialmente en todos los niveles.</small>
           </div>
@@ -135,6 +136,17 @@
             <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
           </div>
           <button id="add-group" type="button" class="button add-group" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
+
+          <section class="beam-editor" aria-labelledby="beam-editor-heading">
+            <div class="beam-editor__head">
+              <div><span>VIGAS DEL MODELO</span><h3 id="beam-editor-heading">Dibuja vigas entre nodos</h3></div>
+              <p>La sección b × h definida arriba se usa en el dibujo y en el metrado.</p>
+            </div>
+            <div id="beam-list" class="beam-list">
+              <p class="beam-empty">Preparando el editor de vigas…</p>
+            </div>
+            <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/24</span></button>
+          </section>
         </section>
 
         <section class="result-panel" aria-labelledby="resultado-heading">
@@ -174,7 +186,8 @@
             <p id="plan-caption">Distribución real por ejes estructurales.</p>
             <div class="iso-legend">
               <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Columna</span>
-              <span class="iso-legend-item"><i class="plan-legend-line"></i>Viga / eje</span>
+              <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--grid"></i>Retícula</span>
+              <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--beam"></i>Viga modelada</span>
               <span id="plan-wing-legend" class="iso-legend-item" hidden><i class="plan-legend-line plan-legend-line--wing"></i>Ala angular</span>
             </div>
           </div>
