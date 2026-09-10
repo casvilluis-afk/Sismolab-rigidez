@@ -97,7 +97,8 @@ button { cursor: pointer; }
 .model-geometry-section > strong, .beam-section-inputs > div:first-child strong { display: block; color: #314149; font-size: 14px; }
 .model-geometry-section > small, .beam-section-inputs > div:first-child small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .length-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin-top: 13px; }
-.length-fields .input-with-unit input, .beam-section-fields .input-with-unit input { padding-right: 34px; }
+.plan-angle-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
+.length-fields .input-with-unit input, .plan-angle-fields .input-with-unit input, .beam-section-fields .input-with-unit input { padding-right: 34px; }
 .beam-section-inputs { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,.8fr); gap: 18px; align-items: end; background: #f6faf9; }
 .beam-section-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
 .field-block { min-width: 0; }
@@ -182,7 +183,7 @@ select { padding: 8px 10px; }
 .iso-column-concrete { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; }
 .iso-column-steel { stroke: var(--amber); stroke-width: 7; stroke-linecap: round; }
 .iso-column-segment { stroke-linecap: butt; }
-.iso-column-joint { fill: white; stroke: #23383e; stroke-width: 1.6; }
+.iso-column-joint { fill: white; stroke: #23383e; stroke-width: 2.2; }
 .iso-footing { fill: none; stroke: #20464e; stroke-width: 3; stroke-linecap: round; }
 .iso-marker-concrete { fill: white; stroke: var(--ink); stroke-width: 2; }
 .iso-marker-steel { fill: white; stroke: var(--amber); stroke-width: 2; }
@@ -208,9 +209,17 @@ select { padding: 8px 10px; }
 .plan-viewer-toolbar .diagram-subheading { margin: 0; text-align: left; text-transform: none; font-size: 16px; letter-spacing: 0; }
 .plan-viewer-toolbar .field-block { width: min(190px,45%); }
 .plan-viewer-toolbar label { margin-bottom: 5px; font-size: 12px; }
-.frame-diagram-plan svg { max-height: 220px; }
+.frame-diagram-plan { min-height: 410px; display: grid; place-items: center; overflow: hidden; }
+.frame-diagram-plan svg { width: 100%; height: 410px; max-height: none; }
 .iso-legend-shape { width: 12px; height: 12px; display: inline-block; border: 2px solid var(--muted); }
 .iso-legend-shape--circle { border-radius: 50%; }
+.plan-legend-line { width: 20px; height: 0; display: inline-block; border-top: 2px solid #4d5e64; }
+.plan-legend-line--wing { border-color: var(--amber); border-top-width: 3px; }
+.dd-beam { stroke: #4d5e64; stroke-width: 1.7; }
+.dd-wing { stroke: var(--amber); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+.dd-column { fill: var(--ink); }
+.dd-axis-label { fill: var(--teal-dark); font-family: var(--mono); font-size: 12px; font-weight: 800; }
+.dd-dim-label { fill: #65767b; font-family: var(--mono); font-size: 11px; font-weight: 700; }
 .plan-grid { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .plan-axis-line { stroke: #8bbab6; stroke-width: 1.5; stroke-dasharray: 5 4; }
 .plan-station-line { stroke: #c4cbdf; stroke-width: 1.5; stroke-dasharray: 5 4; }
@@ -598,9 +607,12 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .building-setup-note { grid-column: 1; }
   .inherited-level-badge { white-space: nowrap; }
   .length-fields { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .plan-angle-fields { grid-template-columns: 1fr 1fr; }
   .beam-section-inputs { grid-template-columns: 1fr; }
   .plan-viewer-toolbar { align-items: stretch; flex-direction: column; }
   .plan-viewer-toolbar .field-block { width: 100%; }
+  .frame-diagram-plan { min-height: 330px; }
+  .frame-diagram-plan svg { height: 330px; }
   .element-takeoff-head, .column-takeoff-summary { align-items: flex-start; flex-direction: column; }
   .column-takeoff-summary output { text-align: left; }
   .axis-coordinate-grid, .mass-geometry-fields, .beam-takeoff-fields { grid-template-columns: 1fr; }
