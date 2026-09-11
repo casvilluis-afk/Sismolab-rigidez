@@ -58,6 +58,22 @@ class BeamMember:
     start_station: int
     end_axis: int
     end_station: int
+    width: float = 0.25
+    depth: float = 0.40
+    level_scope: str = "all"
+
+
+@dataclass
+class SlabPanel:
+    """Paño de losa rectangular definido por dos nodos opuestos de la retícula."""
+
+    id: str
+    label: str
+    start_axis: int
+    start_station: int
+    end_axis: int
+    end_station: int
+    thickness: float = 0.20
     level_scope: str = "all"
 
 
@@ -85,6 +101,8 @@ model_beam_width = 0.25
 model_beam_depth = 0.40
 next_beam_number = 1
 beams: list[BeamMember] = []
+next_slab_number = 1
+slabs: list[SlabPanel] = []
 groups = [
     ColumnGroup(
         id="c1",
@@ -871,28 +889,37 @@ def get_beam(beam_id: str) -> BeamMember | None:
 
 
 def sync_beams_to_load_levels() -> None:
-    """Envía cantidad y longitud equivalente al metrado de cada nivel."""
+    """Envía el volumen exacto de cada viga al metrado de su nivel."""
 
     for level_index, level in enumerate(load_levels):
         active_beams = [beam for beam in beams if _beam_is_active(beam, level_index)]
         level.beam_count = len(active_beams)
-        level.beam_width = model_beam_width
-        level.beam_depth = model_beam_depth
+        level.beam_volume_override = 0.0 if beams else None
         if active_beams:
             lengths = [_beam_length(beam) for beam in active_beams]
+            volumes = [
+                lengths[index] * max(0.0, beam.width) * max(0.0, beam.depth)
+                for index, beam in enumerate(active_beams)
+            ]
             total_length = sum(lengths)
+            total_volume = sum(volumes)
+            level.beam_width = sum(beam.width for beam in active_beams) / len(active_beams)
+            level.beam_depth = sum(beam.depth for beam in active_beams) / len(active_beams)
             level.beam_length = total_length / len(active_beams)
-            if total_length > 1e-9:
+            level.beam_volume_override = total_volume
+            weights = volumes if total_volume > 1e-9 else lengths
+            total_weight = sum(weights)
+            if total_weight > 1e-9:
                 centroids = []
                 for beam in active_beams:
                     start, end = _beam_plan_points(beam)
                     centroids.append(((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0))
                 level.beam_center_x = sum(
-                    lengths[index] * centroids[index][0] for index in range(len(active_beams))
-                ) / total_length
+                    weights[index] * centroids[index][0] for index in range(len(active_beams))
+                ) / total_weight
                 level.beam_center_y = sum(
-                    lengths[index] * centroids[index][1] for index in range(len(active_beams))
-                ) / total_length
+                    weights[index] * centroids[index][1] for index in range(len(active_beams))
+                ) / total_weight
 
 
 def render_beams() -> None:
@@ -907,7 +934,10 @@ def render_beams() -> None:
         beam_note = (
             "Selecciona dos nodos distintos."
             if beam_length <= 1e-9
-            else f"Sección b × h: {format_number(model_beam_width, 2)} × {format_number(model_beam_depth, 2)} m"
+            else (
+                f"Longitud {format_number(beam_length, 2)} m · "
+                f"Área A = b·h = {format_number(beam.width * beam.depth, 3)} m²"
+            )
         )
         start_axis_options = "".join(
             f'<option value="{value}"{" selected" if value == beam.start_axis else ""}>{label}</option>'
@@ -946,9 +976,11 @@ def render_beams() -> None:
                 <div class="field-block"><label for="beam-start-station-{beam.id}">Inicio · línea</label><select id="beam-start-station-{beam.id}" data-field="beam-start-station" data-id="{beam.id}">{start_station_options}</select></div>
                 <div class="field-block"><label for="beam-end-axis-{beam.id}">Fin · eje</label><select id="beam-end-axis-{beam.id}" data-field="beam-end-axis" data-id="{beam.id}">{end_axis_options}</select></div>
                 <div class="field-block"><label for="beam-end-station-{beam.id}">Fin · línea</label><select id="beam-end-station-{beam.id}" data-field="beam-end-station" data-id="{beam.id}">{end_station_options}</select></div>
+                <div class="field-block"><label for="beam-width-{beam.id}">Ancho b</label><div class="input-with-unit"><input id="beam-width-{beam.id}" type="number" min="0.05" max="2" step="0.05" value="{input_number(beam.width)}" data-field="beam-width" data-id="{beam.id}"/><span>m</span></div></div>
+                <div class="field-block"><label for="beam-depth-{beam.id}">Peralte h</label><div class="input-with-unit"><input id="beam-depth-{beam.id}" type="number" min="0.05" max="3" step="0.05" value="{input_number(beam.depth)}" data-field="beam-depth" data-id="{beam.id}"/><span>m</span></div></div>
                 <div class="field-block beam-level-field"><label for="beam-level-{beam.id}">Dibujar en</label><select id="beam-level-{beam.id}" data-field="beam-level" data-id="{beam.id}">{"".join(scope_options)}</select></div>
               </div>
-              <p class="beam-model-meta">{beam_note}</p>
+              <p id="beam-area-{beam.id}" class="beam-model-meta">{beam_note}</p>
             </article>
             """
         )
@@ -957,6 +989,117 @@ def render_beams() -> None:
     )
     by_id("beam-count").textContent = f"{len(beams)}/24"
     by_id("add-beam").disabled = len(beams) >= 24
+
+
+def _slab_is_active(slab: SlabPanel, level_index: int) -> bool:
+    return slab.level_scope == "all" or slab.level_scope == str(level_index)
+
+
+def _slab_plan_points(slab: SlabPanel) -> list[tuple[float, float]]:
+    """Devuelve las cuatro esquinas reales del paño, en orden perimetral."""
+
+    xs, ys = _fixed_plan_coordinates()
+    x_start, x_end = sorted((xs[slab.start_axis], xs[slab.end_axis]))
+    y_start, y_end = sorted((ys[-1 - slab.start_station], ys[-1 - slab.end_station]))
+    return [(x_start, y_start), (x_end, y_start), (x_end, y_end), (x_start, y_end)]
+
+
+def _slab_area(slab: SlabPanel) -> float:
+    points = _slab_plan_points(slab)
+    return abs((points[1][0] - points[0][0]) * (points[3][1] - points[0][1]))
+
+
+def get_slab(slab_id: str) -> SlabPanel | None:
+    return next((slab for slab in slabs if slab.id == slab_id), None)
+
+
+def sync_slabs_to_load_levels() -> None:
+    """Transfiere área, volumen y centro de masa de los paños modelados."""
+
+    for level_index, level in enumerate(load_levels):
+        active_slabs = [slab for slab in slabs if _slab_is_active(slab, level_index)]
+        level.slab_volume_override = 0.0 if slabs else None
+        if not active_slabs:
+            continue
+        areas = [_slab_area(slab) for slab in active_slabs]
+        volumes = [areas[index] * max(0.0, slab.thickness) for index, slab in enumerate(active_slabs)]
+        total_area = sum(areas)
+        total_volume = sum(volumes)
+        if total_area <= 1e-9:
+            continue
+        level.area = total_area
+        level.slab_thickness = total_volume / total_area
+        level.slab_volume_override = total_volume
+        weights = volumes if total_volume > 1e-9 else areas
+        total_weight = sum(weights)
+        centroids = []
+        for slab in active_slabs:
+            points = _slab_plan_points(slab)
+            centroids.append(
+                (
+                    (points[0][0] + points[2][0]) / 2.0,
+                    (points[0][1] + points[2][1]) / 2.0,
+                )
+            )
+        level.center_x = sum(weights[index] * centroids[index][0] for index in range(len(active_slabs))) / total_weight
+        level.center_y = sum(weights[index] * centroids[index][1] for index in range(len(active_slabs))) / total_weight
+
+
+def render_slabs() -> None:
+    """Construye el editor de paños de losa por esquinas y nivel."""
+
+    axis_options = [(index, f"Eje {index + 1}") for index in range(5)]
+    station_options = [(index, chr(65 + index)) for index in range(4)]
+    cards = []
+    for slab in slabs:
+        slab_area = _slab_area(slab)
+        card_class = "slab-model-card is-invalid" if slab_area <= 1e-9 else "slab-model-card"
+
+        def options(items, selected_value):
+            return "".join(
+                f'<option value="{value}"{" selected" if value == selected_value else ""}>{label}</option>'
+                for value, label in items
+            )
+
+        scope_options = [
+            f'<option value="all"{" selected" if slab.level_scope == "all" else ""}>Todos los niveles</option>'
+        ]
+        for level_index in range(len(load_levels)):
+            selected = " selected" if slab.level_scope == str(level_index) else ""
+            scope_options.append(f'<option value="{level_index}"{selected}>{_rigidity_level_name(level_index)}</option>')
+        slab_note = (
+            "Selecciona dos esquinas opuestas para formar un paño."
+            if slab_area <= 1e-9
+            else (
+                f"Área {format_number(slab_area, 2)} m² · volumen "
+                f"{format_number(slab_area * slab.thickness, 3)} m³"
+            )
+        )
+        cards.append(
+            f"""
+            <article class="{card_class}">
+              <div class="beam-model-card__head">
+                <span class="slab-code">{escape(slab.label)}</span>
+                <strong>{format_number(slab_area, 2)} m²</strong>
+                <button type="button" class="button remove-button" aria-label="Eliminar {escape(slab.label)}" data-action="remove-slab" data-id="{slab.id}">×</button>
+              </div>
+              <div class="beam-model-fields">
+                <div class="field-block"><label for="slab-start-axis-{slab.id}">Esquina 1 · eje</label><select id="slab-start-axis-{slab.id}" data-field="slab-start-axis" data-id="{slab.id}">{options(axis_options, slab.start_axis)}</select></div>
+                <div class="field-block"><label for="slab-start-station-{slab.id}">Esquina 1 · línea</label><select id="slab-start-station-{slab.id}" data-field="slab-start-station" data-id="{slab.id}">{options(station_options, slab.start_station)}</select></div>
+                <div class="field-block"><label for="slab-end-axis-{slab.id}">Esquina 2 · eje</label><select id="slab-end-axis-{slab.id}" data-field="slab-end-axis" data-id="{slab.id}">{options(axis_options, slab.end_axis)}</select></div>
+                <div class="field-block"><label for="slab-end-station-{slab.id}">Esquina 2 · línea</label><select id="slab-end-station-{slab.id}" data-field="slab-end-station" data-id="{slab.id}">{options(station_options, slab.end_station)}</select></div>
+                <div class="field-block"><label for="slab-thickness-{slab.id}">Espesor e</label><div class="input-with-unit"><input id="slab-thickness-{slab.id}" type="number" min="0.05" max="1" step="0.01" value="{input_number(slab.thickness)}" data-field="slab-thickness" data-id="{slab.id}"/><span>m</span></div></div>
+                <div class="field-block"><label for="slab-level-{slab.id}">Dibujar en</label><select id="slab-level-{slab.id}" data-field="slab-level" data-id="{slab.id}">{"".join(scope_options)}</select></div>
+              </div>
+              <p id="slab-area-{slab.id}" class="beam-model-meta">{slab_note}</p>
+            </article>
+            """
+        )
+    by_id("slab-list").innerHTML = "".join(cards) if cards else (
+        '<p class="beam-empty">Aún no hay losas modeladas. Añade un paño y selecciona sus dos esquinas.</p>'
+    )
+    by_id("slab-count").textContent = f"{len(slabs)}/16"
+    by_id("add-slab").disabled = len(slabs) >= 16
 
 
 def _rigidity_level_name(index: int) -> str:
@@ -1084,6 +1227,22 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
         f'<svg viewBox="0 0 {svg_width:.0f} {svg_height:.0f}" preserveAspectRatio="xMidYMid meet" '
         f'role="img" aria-label="Planta estructural de {_rigidity_level_name(rigidity_plan_level)}">'
     ]
+    slab_labels = []
+    for slab in slabs:
+        if not _slab_is_active(slab, rigidity_plan_level) or _slab_area(slab) <= 1e-9:
+            continue
+        slab_points = [to_px(point_value) for point_value in _slab_plan_points(slab)]
+        polygon_points = " ".join(f"{x_value:.1f},{y_value:.1f}" for x_value, y_value in slab_points)
+        parts.append(
+            f'<polygon class="dd-model-slab" points="{polygon_points}"><title>{escape(slab.label)} · '
+            f'{format_number(_slab_area(slab), 2)} m² · e={format_number(slab.thickness, 2)} m</title></polygon>'
+        )
+        center_x = sum(point_value[0] for point_value in slab_points) / 4.0
+        center_y = sum(point_value[1] for point_value in slab_points) / 4.0
+        slab_labels.append(
+            f'<text x="{center_x:.1f}" y="{center_y + 4:.1f}" class="dd-slab-label" '
+            f'text-anchor="middle">{escape(slab.label)}</text>'
+        )
     for start, end in guide_lines:
         start_px, end_px = to_px(start), to_px(end)
         parts.append(
@@ -1095,12 +1254,13 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
             parts.append(
                 f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" class="dd-wing"/>'
             )
+    parts.extend(slab_labels)
     for beam in beams:
         if not _beam_is_active(beam, rigidity_plan_level):
             continue
         beam_start, beam_end = _beam_plan_points(beam)
         start_px, end_px = to_px(beam_start), to_px(beam_end)
-        beam_stroke = max(3.5, min(8.0, 3.0 + model_beam_depth * 5.0))
+        beam_stroke = max(3.5, min(8.0, 3.0 + beam.depth * 5.0))
         parts.append(
             f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" '
             f'class="dd-model-beam" style="stroke-width:{beam_stroke:.1f}px"/>'
@@ -1213,12 +1373,34 @@ def render_frame_diagram() -> None:
         slab_class = "iso-slab iso-slab--top" if level_index == total_levels else "iso-slab iso-slab--floor"
         parts.append(f'<polygon class="{slab_class}" points="{slab_points}"/>')
 
+        for modeled_slab in slabs:
+            if not _slab_is_active(modeled_slab, level_index - 1) or _slab_area(modeled_slab) <= 1e-9:
+                continue
+            x_start, x_end = sorted(
+                (axis_positions[modeled_slab.start_axis], axis_positions[modeled_slab.end_axis])
+            )
+            y_start, y_end = sorted(
+                (station_positions[modeled_slab.start_station], station_positions[modeled_slab.end_station])
+            )
+            panel = [
+                point(x_start, y_start, level_index),
+                point(x_end, y_start, level_index),
+                point(x_end, y_end, level_index),
+                point(x_start, y_end, level_index),
+            ]
+            panel_points = " ".join(f"{x_value:.1f},{y_value:.1f}" for x_value, y_value in panel)
+            parts.append(
+                f'<polygon class="iso-model-slab" points="{panel_points}"><title>{escape(modeled_slab.label)} · '
+                f'{format_number(_slab_area(modeled_slab), 2)} m² · '
+                f'e={format_number(modeled_slab.thickness, 2)} m</title></polygon>'
+            )
+
         for beam in beams:
             if not _beam_is_active(beam, level_index - 1):
                 continue
             start = point(axis_positions[beam.start_axis], station_positions[beam.start_station], level_index)
             end = point(axis_positions[beam.end_axis], station_positions[beam.end_station], level_index)
-            beam_stroke = max(3.0, min(7.0, 2.5 + model_beam_depth * 4.0))
+            beam_stroke = max(3.0, min(7.0, 2.5 + beam.depth * 4.0))
             parts.append(
                 f'<line class="iso-model-beam" x1="{start[0]:.1f}" y1="{start[1]:.1f}" '
                 f'x2="{end[0]:.1f}" y2="{end[1]:.1f}" style="stroke-width:{beam_stroke:.1f}px"/>'
@@ -1356,7 +1538,8 @@ def render_frame_diagram() -> None:
     active_beam_count = sum(1 for beam in beams if beam.level_scope == "all")
     by_id("diagram-caption").textContent = (
         f"{total_levels} nivel(es) · {total_columns} columna(s) por nivel · {active_axis_count} eje(s) activos · "
-        f"{len(beams)} viga(s) definida(s), {active_beam_count} repetida(s) en todos los niveles."
+        f"{len(beams)} viga(s) y {len(slabs)} losa(s) definida(s); "
+        f"{active_beam_count} viga(s) repetida(s) en todos los niveles."
     )
 
 
@@ -1384,6 +1567,8 @@ def render_plan_diagram() -> None:
         by_id("plan-wing-legend").hidden = True
     by_id("plan-caption").textContent = (
         f"{_rigidity_level_name(rigidity_plan_level)} · {total_columns} columna(s) · "
+        f"{sum(1 for beam in beams if _beam_is_active(beam, rigidity_plan_level))} viga(s) · "
+        f"{sum(1 for slab in slabs if _slab_is_active(slab, rigidity_plan_level))} losa(s) · "
         f"{axis_names}. {wing_detail}"
     )
 
@@ -2869,10 +3054,15 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
     for beam in beams:
         if beam.level_scope != "all":
             beam.level_scope = str(max(0, min(int(beam.level_scope), target - 1)))
+    for slab in slabs:
+        if slab.level_scope != "all":
+            slab.level_scope = str(max(0, min(int(slab.level_scope), target - 1)))
     sync_beams_to_load_levels()
+    sync_slabs_to_load_levels()
 
     if render:
         render_beams()
+        render_slabs()
         render_frame_diagram()
         render_plan_diagram()
         render_load_levels()
@@ -3030,6 +3220,7 @@ def load_analysis_example() -> None:
     render_unit_toggle()
     render_groups()
     render_beams()
+    render_slabs()
     render_results()
     render_load_levels()
     render_loads_results()
@@ -3108,12 +3299,42 @@ def add_beam() -> None:
             start_station=station,
             end_axis=start_axis + 1,
             end_station=station,
+            width=model_beam_width,
+            depth=model_beam_depth,
             level_scope="all",
         )
     )
     next_beam_number += 1
     sync_beams_to_load_levels()
     render_beams()
+    render_results()
+    render_loads_results()
+    render_analysis_results()
+
+
+def add_slab() -> None:
+    global next_slab_number
+
+    if len(slabs) >= 16:
+        return
+    slab_index = len(slabs)
+    start_axis = slab_index % 4
+    start_station = (slab_index // 4) % 3
+    slabs.append(
+        SlabPanel(
+            id=f"s{next_slab_number}",
+            label=f"L-{next_slab_number:02d}",
+            start_axis=start_axis,
+            start_station=start_station,
+            end_axis=start_axis + 1,
+            end_station=start_station + 1,
+            thickness=0.20,
+            level_scope="all",
+        )
+    )
+    next_slab_number += 1
+    sync_slabs_to_load_levels()
+    render_slabs()
     render_results()
     render_loads_results()
     render_analysis_results()
@@ -3127,6 +3348,7 @@ def reset() -> None:
     global rigidity_plan_level, plan_span_lengths, plan_angle_a, plan_angle_b
     global model_beam_width, model_beam_depth
     global beams, next_beam_number
+    global slabs, next_slab_number
     global load_levels, next_load_level_number
     global loads_use_preset, loads_zone, loads_soil, loads_category, loads_system
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
@@ -3148,6 +3370,7 @@ def reset() -> None:
     plan_angle_a, plan_angle_b = None, None
     model_beam_width, model_beam_depth = 0.25, 0.40
     beams, next_beam_number = [], 1
+    slabs, next_slab_number = [], 1
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
     load_levels = [
         LevelLoad(id="lv1", label="Nivel 1", area=200.0, cm=6.5, cv=2.0, height=3.0, is_roof=False, use_key="vivienda"),
@@ -3165,8 +3388,10 @@ def reset() -> None:
     loads_period_mode, loads_period_manual = "auto", 0.30
     by_id("story-height").value = "3"
     sync_beams_to_load_levels()
+    sync_slabs_to_load_levels()
     render_model_geometry_inputs()
     render_beams()
+    render_slabs()
     render_unit_toggle()
     render_groups()
     render_results()
@@ -3196,11 +3421,21 @@ def handle_click(event):
         add_group()
     elif action == "add-beam":
         add_beam()
+    elif action == "add-slab":
+        add_slab()
     elif action == "remove-beam":
         beam_id = str(action_element.getAttribute("data-id"))
         beams[:] = [beam for beam in beams if beam.id != beam_id]
         sync_beams_to_load_levels()
         render_beams()
+        render_results()
+        render_loads_results()
+        render_analysis_results()
+    elif action == "remove-slab":
+        slab_id = str(action_element.getAttribute("data-id"))
+        slabs[:] = [slab for slab in slabs if slab.id != slab_id]
+        sync_slabs_to_load_levels()
+        render_slabs()
         render_results()
         render_loads_results()
         render_analysis_results()
@@ -3279,7 +3514,9 @@ def handle_input(event):
         plan_span_lengths[index] = max(0.5, parse_number(target.value, plan_span_lengths[index]))
         sync_model_geometry_to_levels()
         sync_beams_to_load_levels()
+        sync_slabs_to_load_levels()
         render_beams()
+        render_slabs()
         render_frame_diagram()
         render_plan_diagram()
         render_loads_results()
@@ -3302,11 +3539,42 @@ def handle_input(event):
             model_beam_width = value
         else:
             model_beam_depth = value
+        return
+    if field in ("beam-width", "beam-depth"):
+        beam = get_beam(str(target.getAttribute("data-id")))
+        if beam is None:
+            return
+        value = max(0.05, parse_number(target.value, beam.width if field == "beam-width" else beam.depth))
+        if field == "beam-width":
+            beam.width = value
+        else:
+            beam.depth = value
         sync_beams_to_load_levels()
-        render_beams()
+        beam_area = by_id(f"beam-area-{beam.id}")
+        beam_area.textContent = (
+            f"Longitud {format_number(_beam_length(beam), 2)} m · "
+            f"Área A = b·h = {format_number(beam.width * beam.depth, 3)} m²"
+        )
         render_frame_diagram()
         render_plan_diagram()
         render_loads_results()
+        render_analysis_results()
+        return
+    if field == "slab-thickness":
+        slab = get_slab(str(target.getAttribute("data-id")))
+        if slab is None:
+            return
+        slab.thickness = max(0.05, parse_number(target.value, slab.thickness))
+        sync_slabs_to_load_levels()
+        slab_area = _slab_area(slab)
+        by_id(f"slab-area-{slab.id}").textContent = (
+            f"Área {format_number(slab_area, 2)} m² · volumen "
+            f"{format_number(slab_area * slab.thickness, 3)} m³"
+        )
+        render_frame_diagram()
+        render_plan_diagram()
+        render_loads_results()
+        render_analysis_results()
         return
     if field == "story-height":
         story_height = parse_number(target.value)
@@ -3407,6 +3675,10 @@ def handle_input(event):
                 level_index = load_levels.index(level)
                 if level_index < len(analysis_heights):
                     analysis_heights[level_index] = level.height
+        if field in ("load-beam-count", "load-beam-width", "load-beam-depth", "load-beam-length"):
+            level.beam_volume_override = None
+        if field in ("load-area", "load-slab-thickness"):
+            level.slab_volume_override = None
         render_loads_results()
         if field == "load-height":
             render_analysis_results()
@@ -3459,6 +3731,26 @@ def handle_change(event):
             setattr(beam, attribute, int(parse_number(target.value)))
         sync_beams_to_load_levels()
         render_beams()
+        render_results()
+        render_loads_results()
+        render_analysis_results()
+        return
+    if field in ("slab-start-axis", "slab-start-station", "slab-end-axis", "slab-end-station", "slab-level"):
+        slab = get_slab(str(target.getAttribute("data-id")))
+        if slab is None:
+            return
+        if field == "slab-level":
+            slab.level_scope = str(target.value)
+        else:
+            attribute = {
+                "slab-start-axis": "start_axis",
+                "slab-start-station": "start_station",
+                "slab-end-axis": "end_axis",
+                "slab-end-station": "end_station",
+            }[field]
+            setattr(slab, attribute, int(parse_number(target.value)))
+        sync_slabs_to_load_levels()
+        render_slabs()
         render_results()
         render_loads_results()
         render_analysis_results()
@@ -3560,7 +3852,9 @@ def initialize() -> None:
     render_unit_toggle()
     render_groups()
     sync_beams_to_load_levels()
+    sync_slabs_to_load_levels()
     render_beams()
+    render_slabs()
     render_results()
     render_load_levels()
     render_loads_site_inputs()

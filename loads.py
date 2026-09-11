@@ -32,7 +32,9 @@ class LevelLoad:
     beam_width: float = 0.25  # m
     beam_depth: float = 0.40  # m
     beam_length: float = 4.0  # m por viga
+    beam_volume_override: float | None = None  # m3; volumen exacto del modelo gráfico
     slab_thickness: float = 0.20  # m
+    slab_volume_override: float | None = None  # m3; volumen exacto de paños modelados
     center_x: float = 2.5  # m, centroide de losa y cargas superficiales
     center_y: float = 2.0  # m
     beam_center_x: float = 2.5  # m, centroide del grupo de vigas
@@ -138,12 +140,15 @@ def combine_mass_properties(components: list[dict[str, float]]) -> dict[str, flo
 def beam_takeoff(level: LevelLoad) -> tuple[float, float]:
     """Volumen y peso propio de las vigas del nivel."""
 
-    volume = (
-        max(0, int(level.beam_count))
-        * max(0.0, float(level.beam_width))
-        * max(0.0, float(level.beam_depth))
-        * max(0.0, float(level.beam_length))
-    )
+    if level.beam_volume_override is None:
+        volume = (
+            max(0, int(level.beam_count))
+            * max(0.0, float(level.beam_width))
+            * max(0.0, float(level.beam_depth))
+            * max(0.0, float(level.beam_length))
+        )
+    else:
+        volume = max(0.0, float(level.beam_volume_override))
     return volume, volume * CONCRETE_UNIT_WEIGHT
 
 
@@ -152,7 +157,11 @@ def level_gravity_breakdown(level: LevelLoad, column_weight_kn: float = 0.0) -> 
 
     beam_volume, beam_weight = beam_takeoff(level)
     surface_dead = float(level.cm) * float(level.area)
-    slab_volume = float(level.slab_thickness) * float(level.area)
+    slab_volume = (
+        float(level.slab_thickness) * float(level.area)
+        if level.slab_volume_override is None
+        else max(0.0, float(level.slab_volume_override))
+    )
     slab_weight = slab_volume * CONCRETE_UNIT_WEIGHT
     other_surface_dead = max(0.0, surface_dead - slab_weight)
     live_load = float(level.cv) * float(level.area)
@@ -548,6 +557,11 @@ def static_seismic_forces(
             level.strength_x,
             level.strength_y,
         )
+        numeric_values += tuple(
+            float(value)
+            for value in (level.beam_volume_override, level.slab_volume_override)
+            if value is not None
+        )
         if not all(isfinite(float(value)) for value in numeric_values):
             raise ValueError(f"Los datos geométricos del nivel {index + 1} deben ser números válidos.")
         if min(
@@ -564,6 +578,12 @@ def static_seismic_forces(
             level.strength_y,
         ) < 0:
             raise ValueError(f"Las cargas y dimensiones del nivel {index + 1} no pueden ser negativas.")
+        if any(
+            float(value) < 0
+            for value in (level.beam_volume_override, level.slab_volume_override)
+            if value is not None
+        ):
+            raise ValueError(f"Los volúmenes modelados del nivel {index + 1} no pueden ser negativos.")
         if level.plan_x <= 0 or level.plan_y <= 0:
             raise ValueError(f"Las dimensiones de planta del nivel {index + 1} deben ser mayores que cero.")
         slab_load = level.slab_thickness * CONCRETE_UNIT_WEIGHT

@@ -113,7 +113,7 @@
               <small class="plan-angle-help">El ala naranja aparece únicamente cuando completas los dos ángulos.</small>
             </div>
             <div class="model-geometry-section beam-section-inputs">
-              <div><strong>Sección típica de viga</strong><small>Se hereda en el metrado de todos los niveles.</small></div>
+              <div><strong>Sección predeterminada de viga</strong><small>Se usa únicamente al crear vigas nuevas; luego podrás editar cada una.</small></div>
               <div class="beam-section-fields">
                 <div class="field-block"><label for="beam-section-width">Ancho b</label><div class="input-with-unit"><input id="beam-section-width" type="number" min="0.05" max="2" step="0.05" value="0.25" data-field="beam-section-width" /><span>m</span></div></div>
                 <div class="field-block"><label for="beam-section-depth">Peralte h</label><div class="input-with-unit"><input id="beam-section-depth" type="number" min="0.05" max="3" step="0.05" value="0.40" data-field="beam-section-depth" /><span>m</span></div></div>
@@ -122,12 +122,13 @@
           </section>
 
           <div class="axis-builder-guide" role="note" aria-label="Cómo dibujar la planta estructural">
-            <strong>Dibuja tu estructura en cuatro pasos</strong>
+            <strong>Dibuja tu estructura en cinco pasos</strong>
             <ol>
               <li><span>1</span>Añade un grupo de columnas.</li>
               <li><span>2</span>Escribe el eje: 1, 2, A, B…</li>
               <li><span>3</span>Ubícalo con X₀ e Y₀ y revisa la planta.</li>
               <li><span>4</span>Añade vigas indicando sus nodos inicial y final.</li>
+              <li><span>5</span>Añade losas seleccionando dos esquinas opuestas del paño.</li>
             </ol>
             <small>La distribución definida aquí se usa inicialmente en todos los niveles.</small>
           </div>
@@ -140,12 +141,23 @@
           <section class="beam-editor" aria-labelledby="beam-editor-heading">
             <div class="beam-editor__head">
               <div><span>VIGAS DEL MODELO</span><h3 id="beam-editor-heading">Dibuja vigas entre nodos</h3></div>
-              <p>La sección b × h definida arriba se usa en el dibujo y en el metrado.</p>
+              <p>Cada viga puede tener su propio ancho y peralte; la sección superior sólo es el valor inicial.</p>
             </div>
             <div id="beam-list" class="beam-list">
               <p class="beam-empty">Preparando el editor de vigas…</p>
             </div>
             <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/24</span></button>
+          </section>
+
+          <section class="beam-editor slab-editor" aria-labelledby="slab-editor-heading">
+            <div class="beam-editor__head slab-editor__head">
+              <div><span>LOSAS DEL MODELO</span><h3 id="slab-editor-heading">Dibuja losas por paños</h3></div>
+              <p>Define dos esquinas, el espesor y los niveles donde existe cada paño.</p>
+            </div>
+            <div id="slab-list" class="beam-list slab-list">
+              <p class="beam-empty">Preparando el editor de losas…</p>
+            </div>
+            <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>＋ Añadir paño de losa <span id="slab-count">0/16</span></button>
           </section>
         </section>
 
@@ -173,6 +185,7 @@
             <div class="iso-legend">
               <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--concrete"></i>Concreto</span>
               <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--steel"></i>Acero</span>
+              <span class="iso-legend-item"><i class="iso-legend-slab"></i>Losa modelada</span>
             </div>
             <div class="diagram-divider"></div>
             <div class="plan-viewer-toolbar">
@@ -188,6 +201,7 @@
               <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Columna</span>
               <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--grid"></i>Retícula</span>
               <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--beam"></i>Viga modelada</span>
+              <span class="iso-legend-item"><i class="plan-legend-slab"></i>Losa modelada</span>
               <span id="plan-wing-legend" class="iso-legend-item" hidden><i class="plan-legend-line plan-legend-line--wing"></i>Ala angular</span>
             </div>
           </div>
