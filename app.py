@@ -97,8 +97,8 @@ rigidity_plan_level = 0
 plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
 plan_angle_a = None
 plan_angle_b = None
-model_beam_width = 0.25
-model_beam_depth = 0.40
+DEFAULT_BEAM_WIDTH = 0.25
+DEFAULT_BEAM_DEPTH = 0.40
 next_beam_number = 1
 beams: list[BeamMember] = []
 next_slab_number = 1
@@ -1666,8 +1666,6 @@ def render_model_geometry_inputs() -> None:
         by_id(f"plan-length-{index + 1}").value = input_number(length)
     by_id("plan-angle-a").value = "" if plan_angle_a is None else input_number(plan_angle_a)
     by_id("plan-angle-b").value = "" if plan_angle_b is None else input_number(plan_angle_b)
-    by_id("beam-section-width").value = input_number(model_beam_width)
-    by_id("beam-section-depth").value = input_number(model_beam_depth)
 
 
 def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
@@ -3031,8 +3029,8 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
                 height=story_height,
                 is_roof=False,
                 use_key=loads_use_preset,
-                beam_width=model_beam_width,
-                beam_depth=model_beam_depth,
+                beam_width=DEFAULT_BEAM_WIDTH,
+                beam_depth=DEFAULT_BEAM_DEPTH,
                 center_x=reference.center_x,
                 center_y=reference.center_y,
                 plan_x=reference.plan_x,
@@ -3299,8 +3297,8 @@ def add_beam() -> None:
             start_station=station,
             end_axis=start_axis + 1,
             end_station=station,
-            width=model_beam_width,
-            depth=model_beam_depth,
+            width=DEFAULT_BEAM_WIDTH,
+            depth=DEFAULT_BEAM_DEPTH,
             level_scope="all",
         )
     )
@@ -3346,7 +3344,6 @@ def reset() -> None:
     global analysis_stiffness_x, analysis_stiffness_y
     global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
     global rigidity_plan_level, plan_span_lengths, plan_angle_a, plan_angle_b
-    global model_beam_width, model_beam_depth
     global beams, next_beam_number
     global slabs, next_slab_number
     global load_levels, next_load_level_number
@@ -3368,7 +3365,6 @@ def reset() -> None:
     rigidity_plan_level = 0
     plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
     plan_angle_a, plan_angle_b = None, None
-    model_beam_width, model_beam_depth = 0.25, 0.40
     beams, next_beam_number = [], 1
     slabs, next_slab_number = [], 1
     groups = [ColumnGroup("c1", 2, "square", 300.0, 21.0, "fixed", "fixed", "concrete", "X", "1", 0.0, 0.0, 0.0)]
@@ -3503,7 +3499,7 @@ def handle_click(event):
 def handle_input(event):
     global story_height, analysis_alpha, analysis_cm_x, analysis_cm_y
     global analysis_ecc_x, analysis_ecc_y
-    global plan_angle_a, plan_angle_b, model_beam_width, model_beam_depth
+    global plan_angle_a, plan_angle_b
     target = event.target
     field = target.getAttribute("data-field")
     if field is None:
@@ -3532,13 +3528,6 @@ def handle_input(event):
         render_plan_diagram()
         render_loads_results()
         render_analysis_results()
-        return
-    if field in ("beam-section-width", "beam-section-depth"):
-        value = max(0.05, parse_number(target.value, 0.25))
-        if field == "beam-section-width":
-            model_beam_width = value
-        else:
-            model_beam_depth = value
         return
     if field in ("beam-width", "beam-depth"):
         beam = get_beam(str(target.getAttribute("data-id")))

@@ -95,7 +95,7 @@
           <section class="model-geometry-card" aria-labelledby="model-geometry-heading">
             <div class="model-geometry-card__head">
               <span aria-hidden="true">⌗</span>
-              <div><h3 id="model-geometry-heading">Geometría de la planta</h3><p>Define las separaciones entre ejes y la sección típica de las vigas.</p></div>
+              <div><h3 id="model-geometry-heading">Geometría de la planta</h3><p>Define las separaciones entre los ejes de la retícula.</p></div>
             </div>
             <div class="model-geometry-section">
               <strong>Longitudes entre ejes</strong>
@@ -112,13 +112,6 @@
               </div>
               <small class="plan-angle-help">El ala naranja aparece únicamente cuando completas los dos ángulos.</small>
             </div>
-            <div class="model-geometry-section beam-section-inputs">
-              <div><strong>Sección predeterminada de viga</strong><small>Se usa únicamente al crear vigas nuevas; luego podrás editar cada una.</small></div>
-              <div class="beam-section-fields">
-                <div class="field-block"><label for="beam-section-width">Ancho b</label><div class="input-with-unit"><input id="beam-section-width" type="number" min="0.05" max="2" step="0.05" value="0.25" data-field="beam-section-width" /><span>m</span></div></div>
-                <div class="field-block"><label for="beam-section-depth">Peralte h</label><div class="input-with-unit"><input id="beam-section-depth" type="number" min="0.05" max="3" step="0.05" value="0.40" data-field="beam-section-depth" /><span>m</span></div></div>
-              </div>
-            </div>
           </section>
 
           <div class="axis-builder-guide" role="note" aria-label="Cómo dibujar la planta estructural">
@@ -133,32 +126,38 @@
             <small>La distribución definida aquí se usa inicialmente en todos los niveles.</small>
           </div>
 
-          <div id="group-list" class="group-list">
-            <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
-          </div>
-          <button id="add-group" type="button" class="button add-group" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
-
-          <section class="beam-editor" aria-labelledby="beam-editor-heading">
-            <div class="beam-editor__head">
-              <div><span>VIGAS DEL MODELO</span><h3 id="beam-editor-heading">Dibuja vigas entre nodos</h3></div>
-              <p>Cada viga puede tener su propio ancho y peralte; la sección superior sólo es el valor inicial.</p>
+          <details class="beam-editor column-editor" aria-labelledby="column-editor-heading" open>
+            <summary class="beam-editor__head column-editor__head">
+              <div><span>COLUMNAS DEL MODELO</span><h3 id="column-editor-heading">Edita grupos de columnas</h3></div>
+              <p>El panel se puede plegar y la lista tendrá desplazamiento interno al crecer.</p>
+            </summary>
+            <div id="group-list" class="group-list editor-scroll-list">
+              <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
             </div>
-            <div id="beam-list" class="beam-list">
+            <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
+          </details>
+
+          <details class="beam-editor" aria-labelledby="beam-editor-heading" open>
+            <summary class="beam-editor__head">
+              <div><span>VIGAS DEL MODELO</span><h3 id="beam-editor-heading">Dibuja vigas entre nodos</h3></div>
+              <p>Cada viga tiene su propio ancho y peralte. Pliega este panel cuando termines.</p>
+            </summary>
+            <div id="beam-list" class="beam-list editor-scroll-list">
               <p class="beam-empty">Preparando el editor de vigas…</p>
             </div>
             <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/24</span></button>
-          </section>
+          </details>
 
-          <section class="beam-editor slab-editor" aria-labelledby="slab-editor-heading">
-            <div class="beam-editor__head slab-editor__head">
+          <details class="beam-editor slab-editor" aria-labelledby="slab-editor-heading" open>
+            <summary class="beam-editor__head slab-editor__head">
               <div><span>LOSAS DEL MODELO</span><h3 id="slab-editor-heading">Dibuja losas por paños</h3></div>
-              <p>Define dos esquinas, el espesor y los niveles donde existe cada paño.</p>
-            </div>
-            <div id="slab-list" class="beam-list slab-list">
+              <p>Define las esquinas, el espesor y los niveles. La lista no alarga toda la página.</p>
+            </summary>
+            <div id="slab-list" class="beam-list slab-list editor-scroll-list">
               <p class="beam-empty">Preparando el editor de losas…</p>
             </div>
             <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>＋ Añadir paño de losa <span id="slab-count">0/16</span></button>
-          </section>
+          </details>
         </section>
 
         <section class="result-panel" aria-labelledby="resultado-heading">

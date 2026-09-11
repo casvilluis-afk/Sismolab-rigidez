@@ -94,20 +94,28 @@ button { cursor: pointer; }
 .model-geometry-card__head p { margin: 3px 0 0; color: #b9cacc; font-size: 12px; line-height: 1.45; }
 .model-geometry-section { padding: 16px 18px; }
 .model-geometry-section + .model-geometry-section { border-top: 1px solid var(--border); }
-.model-geometry-section > strong, .beam-section-inputs > div:first-child strong { display: block; color: #314149; font-size: 14px; }
-.model-geometry-section > small, .beam-section-inputs > div:first-child small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.model-geometry-section > strong { display: block; color: #314149; font-size: 14px; }
+.model-geometry-section > small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .length-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin-top: 13px; }
 .plan-angle-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
 .plan-angle-help { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
-.length-fields .input-with-unit input, .plan-angle-fields .input-with-unit input, .beam-section-fields .input-with-unit input { padding-right: 34px; }
-.beam-section-inputs { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,.8fr); gap: 18px; align-items: end; background: #f6faf9; }
-.beam-section-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.length-fields .input-with-unit input, .plan-angle-fields .input-with-unit input { padding-right: 34px; }
 .beam-editor { margin-top: 18px; overflow: hidden; background: white; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgba(18,44,51,.05); }
-.beam-editor__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 16px 18px; color: white; background: linear-gradient(135deg,#10191d,#17343a); }
+.beam-editor__head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 16px 54px 16px 18px; color: white; background: linear-gradient(135deg,#10191d,#17343a); }
+summary.beam-editor__head { cursor: pointer; list-style: none; user-select: none; }
+summary.beam-editor__head::-webkit-details-marker { display: none; }
+summary.beam-editor__head::after { content: "⌄"; position: absolute; top: 50%; right: 18px; width: 26px; height: 26px; display: grid; place-items: center; color: #d8f1f0; border: 1px solid rgba(216,241,240,.35); border-radius: 50%; font-size: 18px; transform: translateY(-50%) rotate(0deg); transition: transform .18s ease, background .18s ease; }
+.beam-editor[open] > summary.beam-editor__head::after { transform: translateY(-50%) rotate(180deg); }
+summary.beam-editor__head:hover::after { background: rgba(255,255,255,.1); }
+summary.beam-editor__head:focus-visible { outline: 3px solid rgba(92,207,211,.45); outline-offset: -3px; }
 .beam-editor__head span { color: #78d7d4; font-family: var(--mono); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
 .beam-editor__head h3 { margin: 4px 0 0; font-size: 16px; }
 .beam-editor__head p { max-width: 250px; margin: 0; color: #bfd0d2; font-size: 12px; line-height: 1.45; }
 .beam-list { display: grid; gap: 10px; padding: 14px; }
+.editor-scroll-list { max-height: 620px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.editor-scroll-list::-webkit-scrollbar { width: 10px; }
+.editor-scroll-list::-webkit-scrollbar-track { background: #edf3f2; }
+.editor-scroll-list::-webkit-scrollbar-thumb { background: #98afad; border: 2px solid #edf3f2; border-radius: 999px; }
 .beam-model-card { padding: 14px; background: #f7faf9; border: 1px solid #d7e2df; border-left: 4px solid var(--teal); border-radius: 9px; }
 .slab-model-card { padding: 14px; background: #f5fafb; border: 1px solid #d1e2e4; border-left: 4px solid #326e81; border-radius: 9px; }
 .beam-model-card.is-invalid { border-left-color: var(--danger); }
@@ -128,6 +136,10 @@ button { cursor: pointer; }
 .slab-editor__head { background: linear-gradient(135deg,#111a1e,#234957); }
 .slab-editor__head span { color: #8dd8e3; }
 .add-slab { color: #285b6b; background: #e6f3f5; border-color: #a9cbd1; }
+.column-editor__head { background: linear-gradient(135deg,#10191d,#263b40); }
+.column-editor .group-list { gap: 12px; padding: 14px; background: #f0f5f4; }
+.column-editor .column-card { box-shadow: none; }
+.column-editor .add-group { width: calc(100% - 28px); margin: 0 14px 14px; }
 .field-block { min-width: 0; }
 .field-block label, .field-block legend { display: block; margin-bottom: 8px; color: #314149; font-size: 14px; font-weight: 700; }
 .field-block small { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
@@ -649,7 +661,6 @@ footer .page-shell { display: flex; justify-content: space-between; gap: 20px; }
   .inherited-level-badge { white-space: nowrap; }
   .length-fields { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .plan-angle-fields { grid-template-columns: 1fr 1fr; }
-  .beam-section-inputs { grid-template-columns: 1fr; }
   .beam-editor__head { flex-direction: column; }
   .beam-editor__head p { max-width: none; }
   .beam-model-fields { grid-template-columns: 1fr; }
