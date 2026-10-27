@@ -134,7 +134,7 @@
             <div id="group-list" class="group-list editor-scroll-list">
               <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
             </div>
-            <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/8</span></button>
+            <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/20</span></button>
           </details>
 
           <details class="beam-editor" aria-labelledby="beam-editor-heading" open>
@@ -145,7 +145,7 @@
             <div id="beam-list" class="beam-list editor-scroll-list">
               <p class="beam-empty">Preparando el editor de vigas…</p>
             </div>
-            <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/24</span></button>
+            <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/31</span></button>
           </details>
 
           <details class="beam-editor slab-editor" aria-labelledby="slab-editor-heading" open>
@@ -156,7 +156,7 @@
             <div id="slab-list" class="beam-list slab-list editor-scroll-list">
               <p class="beam-empty">Preparando el editor de losas…</p>
             </div>
-            <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>＋ Añadir paño de losa <span id="slab-count">0/16</span></button>
+            <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>＋ Añadir paño de losa <span id="slab-count">0/12</span></button>
           </details>
         </section>
 
@@ -545,8 +545,16 @@
             </div>
 
             <div class="analysis-plan-card">
-              <div class="subheading"><h3>Momento en columna</h3><span>Extremo Vh/2 del eje seleccionado arriba</span></div>
+              <div class="subheading"><h3>Momento en columna</h3><span>Momento de extremo del eje seleccionado arriba</span></div>
               <div id="analysis-column-moment-chart" class="analysis-chart"></div>
+            </div>
+
+            <div class="analysis-table-card modal-card" aria-labelledby="analysis-modal-heading">
+              <div class="subheading subheading--with-control">
+                <div><h3 id="analysis-modal-heading">Análisis modal</h3><span>Periodos, frecuencias y participación de masa</span></div>
+                <div class="viz-control"><label for="analysis-modal-mode">Modo</label><select id="analysis-modal-mode" data-field="analysis-modal-mode"></select></div>
+              </div>
+              <div id="analysis-modal"></div>
             </div>
 
             <div id="analysis-displacements" class="analysis-table-card"></div>
@@ -559,13 +567,14 @@
           <div class="analysis-method-grid">
             <article><span>01</span><h3>Matriz de cada eje</h3><p>Las rigideces de los pisos forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></article>
             <article><span>02</span><h3>Posición y orientación</h3><p>G relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo perpendicular r.</p></article>
-            <article><span>03</span><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G y el sistema K<sub>P3D</sub>U = F entrega desplazamientos y giros.</p></article>
+            <article><span>03</span><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G y el sistema K<sub>P3D</sub>U = F entrega desplazamientos y giros. La inversa F = K<sup>−1</sup> es la matriz de flexibilidad.</p></article>
+            <article><span>04</span><h3>Análisis modal</h3><p>Con la masa m y la inercia J = m(a²+b²)/12 de cada diafragma se resuelve Kφ = ω²Mφ: periodos T = 2π/ω, formas de modo y masa participativa.</p></article>
           </div>
         </section>
 
         <div class="analysis-scope">
           <strong>Alcance de esta etapa</strong>
-          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. La geometría base de los grupos se repite; cuando defines Kx o Ky por piso en Metrado, su aporte se escala proporcionalmente en ese nivel. No incluye vigas deformables, interacción suelo–estructura, segundo orden, combinación ortogonal 100% + 30% ni el procedimiento dinámico completo de la E.030.</p>
+          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. La geometría base de los grupos se repite; cuando defines Kx o Ky por piso en Metrado, su aporte se escala proporcionalmente en ese nivel. No incluye vigas deformables, interacción suelo–estructura, segundo orden, combinación ortogonal 100% + 30% ni la combinación espectral de respuestas de la E.030. El análisis modal usa las masas del Metrado.</p>
         </div>
       </section>
 

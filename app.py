@@ -16,6 +16,8 @@ from stiffness import (
     boundary_description,
     boundary_factor,
     analyze_pseudotridimensional,
+    invert_matrix,
+    modal_analysis,
     assess_torsional_irregularity,
     calculate_group,
     calculate_story,
@@ -93,10 +95,16 @@ analysis_ecc_x = 0.0
 analysis_ecc_y = 0.0
 analysis_view_level = None
 analysis_selected_axis_id = None
+analysis_modal_mode = 0
 rigidity_plan_level = 0
 plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
 plan_angle_a = None
 plan_angle_b = None
+GRID_AXIS_COUNT = 5  # ejes 1–5 (posiciones en X)
+GRID_STATION_COUNT = 4  # ejes A–D (posiciones en Y)
+MAX_GROUPS = 20
+MAX_BEAMS = (GRID_AXIS_COUNT - 1) * GRID_STATION_COUNT + GRID_AXIS_COUNT * (GRID_STATION_COUNT - 1)
+MAX_SLABS = (GRID_AXIS_COUNT - 1) * (GRID_STATION_COUNT - 1)
 DEFAULT_BEAM_WIDTH = 0.25
 DEFAULT_BEAM_DEPTH = 0.40
 next_beam_number = 1
@@ -194,6 +202,7 @@ def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
     """Desglose de columnas por grupo, incluyendo masa y centroide en planta."""
 
     rows: list[dict[str, object]] = []
+    placement = _grid_column_placement()
     for index, group in enumerate(groups):
         dimension_m = group.dimension / (1_000.0 if units == "SI" else 100.0)
         section_area = (
@@ -201,7 +210,9 @@ def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
             if group.shape == "square"
             else pi * dimension_m**2 / 4.0
         )
-        quantity = max(0, int(group.quantity))
+        # Las columnas en nudos ya contados por otro pórtico no se vuelven a metrar.
+        quantity = int(placement["new_nodes"][index]) + int(placement["overflow"][index])
+        shared = max(0, int(group.quantity) - quantity)
         volume = quantity * section_area * max(0.0, story_height_m)
         unit_weight = 24.0 if group.material == "concrete" else 78.5
         weight = volume * unit_weight
@@ -209,7 +220,9 @@ def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
         rows.append(
             {
                 "number": index + 1,
-                "description": f"C{index + 1} · Eje {group.axis}",
+                "description": f"C{index + 1} · Eje {group.axis}"
+                + (f" ({shared} compartida{'s' if shared != 1 else ''})" if shared else ""),
+                "shared": shared,
                 "quantity": quantity,
                 "shape": shape_name(group.shape),
                 "dimension": dimension_m,
@@ -425,8 +438,8 @@ def group_card(group: ColumnGroup, index: int) -> str:
 
 def render_groups() -> None:
     by_id("group-list").innerHTML = "".join(group_card(group, index) for index, group in enumerate(groups))
-    by_id("group-count").textContent = f"{len(groups)}/8"
-    by_id("add-group").disabled = len(groups) >= 8
+    by_id("group-count").textContent = f"{len(groups)}/{MAX_GROUPS}"
+    by_id("add-group").disabled = len(groups) >= MAX_GROUPS
 
 
 def section_diagram(shape: str) -> str:
@@ -840,23 +853,70 @@ def _layout_positions(count: int, outer: float, inner: float, scale: float) -> l
     return positions
 
 
-def _fixed_grid_column_slots() -> list[tuple[str, list[tuple[str, str, str]], int]]:
-    """Ubica los grupos en los cinco ejes de la retícula compartida."""
+def _grid_column_placement() -> dict[str, object]:
+    """Ubica cada columna en un nudo (eje 1–5, línea A–D) de la retícula.
 
-    slots: list[list[tuple[str, str, str]]] = [[] for _ in range(5)]
-    totals = [0] * 5
-    for layout_index, (axis, axis_units, axis_total) in enumerate(_grid_layout(cap_per_axis=4)):
-        clean_axis = str(axis).strip().lower()
-        if clean_axis.startswith("eje "):
-            clean_axis = clean_axis[4:].strip()
-        if clean_axis.isdigit() and 1 <= int(clean_axis) <= 5:
-            axis_index = int(clean_axis) - 1
+    Los grupos de los ejes 1–5 ocupan las líneas A, B, C… de su eje; los de
+    las líneas A–D ocupan los ejes 1, 2, 3… de su línea. Un nudo compartido
+    por un pórtico en X y otro en Y es una sola columna física: se dibuja y se
+    metra una vez, aunque aporte rigidez a ambas direcciones.
+    """
+
+    nodes: dict[tuple[int, int], tuple[str, str, str]] = {}
+    stacked_axis: dict[int, set[int]] = {}
+    stacked_row: dict[int, set[int]] = {}
+    new_nodes = [0] * len(groups)
+    overflow = [0] * len(groups)
+    overflow_axis = [0] * GRID_AXIS_COUNT
+    labels: list[str] = []
+    for index, group in enumerate(groups):
+        label = _normalized_axis(group.axis)
+        if label not in labels:
+            labels.append(label)
+        quantity = max(0, int(group.quantity))
+        if len(label) == 1 and "A" <= label <= chr(64 + GRID_STATION_COUNT):
+            row = ord(label) - 65
+            taken = stacked_row.setdefault(row, set())
+            positions = [(axis, row) for axis in range(GRID_AXIS_COUNT) if axis not in taken]
+            placed = positions[:quantity]
+            taken.update(axis for axis, _row in placed)
+            overflow_target = 0
         else:
-            axis_index = min(layout_index, 4)
-        remaining = max(0, 4 - len(slots[axis_index]))
-        slots[axis_index].extend(axis_units[:remaining])
-        totals[axis_index] += axis_total
-    return [(str(index + 1), slots[index], totals[index]) for index in range(5)]
+            if label.isdigit() and 1 <= int(label) <= GRID_AXIS_COUNT:
+                axis_index = int(label) - 1
+            else:
+                axis_index = min(labels.index(label), GRID_AXIS_COUNT - 1)
+            taken = stacked_axis.setdefault(axis_index, set())
+            positions = [(axis_index, station) for station in range(GRID_STATION_COUNT) if station not in taken]
+            placed = positions[:quantity]
+            taken.update(station for _axis, station in placed)
+            overflow_target = axis_index
+        for node in placed:
+            if node not in nodes:
+                nodes[node] = (group.material, group.shape, group.direction)
+                new_nodes[index] += 1
+        overflow[index] = quantity - len(placed)
+        overflow_axis[overflow_target] += overflow[index]
+    return {
+        "nodes": nodes,
+        "new_nodes": new_nodes,
+        "overflow": overflow,
+        "overflow_axis": overflow_axis,
+    }
+
+
+def _fixed_grid_column_slots() -> list[tuple[str, list[tuple[str, str, str, int]], int]]:
+    """Columnas por eje 1–5 como (material, sección, dirección, línea)."""
+
+    placement = _grid_column_placement()
+    slots: list[list[tuple[str, str, str, int]]] = [[] for _ in range(GRID_AXIS_COUNT)]
+    for (axis, station), (material, shape, direction) in sorted(placement["nodes"].items()):
+        slots[axis].append((material, shape, direction, station))
+    overflow_axis = placement["overflow_axis"]
+    return [
+        (str(index + 1), slots[index], len(slots[index]) + overflow_axis[index])
+        for index in range(GRID_AXIS_COUNT)
+    ]
 
 
 def _fixed_plan_coordinates() -> tuple[list[float], list[float]]:
@@ -888,38 +948,156 @@ def get_beam(beam_id: str) -> BeamMember | None:
     return next((beam for beam in beams if beam.id == beam_id), None)
 
 
+def _beam_unit_edges(beam: BeamMember) -> list[tuple[int, int, int, int]] | None:
+    """Tramos unitarios de la retícula que cubre una viga ortogonal; None si es diagonal."""
+
+    if beam.start_station == beam.end_station:
+        low, high = sorted((beam.start_axis, beam.end_axis))
+        return [(axis, beam.start_station, axis + 1, beam.start_station) for axis in range(low, high)]
+    if beam.start_axis == beam.end_axis:
+        low, high = sorted((beam.start_station, beam.end_station))
+        return [(beam.start_axis, station, beam.start_axis, station + 1) for station in range(low, high)]
+    return None
+
+
+def _scopes_overlap(first: str, second: str) -> bool:
+    return first == "all" or second == "all" or first == second
+
+
+def _beam_overlaps() -> dict[str, str]:
+    """Viga → etiqueta de la viga anterior con la que comparte algún tramo."""
+
+    overlaps: dict[str, str] = {}
+    for index, beam in enumerate(beams):
+        edges = _beam_unit_edges(beam)
+        for previous in beams[:index]:
+            if not _scopes_overlap(beam.level_scope, previous.level_scope):
+                continue
+            previous_edges = _beam_unit_edges(previous)
+            if edges is None or previous_edges is None:
+                shared = _beam_key(beam) == _beam_key(previous) and _beam_length(beam) > 1e-9
+            else:
+                shared = bool(set(edges) & set(previous_edges))
+            if shared:
+                overlaps[beam.id] = previous.label
+                break
+    return overlaps
+
+
+def _beam_counted_segments(level_index: int) -> list[tuple[BeamMember, float, tuple[float, float]]]:
+    """(viga, longitud no repetida, centroide) de las vigas activas en el nivel."""
+
+    xs, ys = _fixed_plan_coordinates()
+    covered: set[tuple[int, int, int, int]] = set()
+    covered_diagonals: set[tuple[int, int, int, int]] = set()
+    segments = []
+    for beam in beams:
+        if not _beam_is_active(beam, level_index):
+            continue
+        edges = _beam_unit_edges(beam)
+        if edges is None:
+            key = _beam_key(beam)
+            if key in covered_diagonals:
+                continue
+            covered_diagonals.add(key)
+            start, end = _beam_plan_points(beam)
+            segments.append((beam, _beam_length(beam), ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)))
+            continue
+        new_edges = [edge for edge in edges if edge not in covered]
+        covered.update(edges)
+        if not new_edges:
+            continue
+        length = 0.0
+        moment_x = moment_y = 0.0
+        for a1, s1, a2, s2 in new_edges:
+            p1 = (xs[a1], ys[-1 - s1])
+            p2 = (xs[a2], ys[-1 - s2])
+            edge_length = hypot(p2[0] - p1[0], p2[1] - p1[1])
+            length += edge_length
+            moment_x += edge_length * (p1[0] + p2[0]) / 2.0
+            moment_y += edge_length * (p1[1] + p2[1]) / 2.0
+        if length > 1e-9:
+            segments.append((beam, length, (moment_x / length, moment_y / length)))
+    return segments
+
+
+def _slab_cells(slab: SlabPanel) -> list[tuple[int, int]]:
+    low_axis, high_axis = sorted((slab.start_axis, slab.end_axis))
+    low_station, high_station = sorted((slab.start_station, slab.end_station))
+    return [
+        (axis, station)
+        for axis in range(low_axis, high_axis)
+        for station in range(low_station, high_station)
+    ]
+
+
+def _slab_overlaps() -> dict[str, str]:
+    overlaps: dict[str, str] = {}
+    for index, slab in enumerate(slabs):
+        cells = set(_slab_cells(slab))
+        for previous in slabs[:index]:
+            if _scopes_overlap(slab.level_scope, previous.level_scope) and cells & set(_slab_cells(previous)):
+                overlaps[slab.id] = previous.label
+                break
+    return overlaps
+
+
+def _slab_counted_panels(level_index: int) -> list[tuple[SlabPanel, float, tuple[float, float]]]:
+    """(losa, área no repetida, centroide) de los paños activos en el nivel."""
+
+    xs, ys = _fixed_plan_coordinates()
+    covered: set[tuple[int, int]] = set()
+    panels = []
+    for slab in slabs:
+        if not _slab_is_active(slab, level_index):
+            continue
+        cells = _slab_cells(slab)
+        new_cells = [cell for cell in cells if cell not in covered]
+        covered.update(cells)
+        area = moment_x = moment_y = 0.0
+        for axis, station in new_cells:
+            x1, x2 = xs[axis], xs[axis + 1]
+            y1, y2 = ys[-1 - station], ys[-2 - station]
+            cell_area = abs((x2 - x1) * (y2 - y1))
+            area += cell_area
+            moment_x += cell_area * (x1 + x2) / 2.0
+            moment_y += cell_area * (y1 + y2) / 2.0
+        if area > 1e-9:
+            panels.append((slab, area, (moment_x / area, moment_y / area)))
+    return panels
+
+
 def sync_beams_to_load_levels() -> None:
-    """Envía el volumen exacto de cada viga al metrado de su nivel."""
+    """Envía el volumen exacto de cada viga al metrado de su nivel.
+
+    Los tramos que se repiten entre vigas del mismo nivel se cuentan una sola vez.
+    """
 
     for level_index, level in enumerate(load_levels):
-        active_beams = [beam for beam in beams if _beam_is_active(beam, level_index)]
-        level.beam_count = len(active_beams)
+        segments = _beam_counted_segments(level_index)
+        level.beam_count = len(segments)
         level.beam_volume_override = 0.0 if beams else None
-        if active_beams:
-            lengths = [_beam_length(beam) for beam in active_beams]
-            volumes = [
-                lengths[index] * max(0.0, beam.width) * max(0.0, beam.depth)
-                for index, beam in enumerate(active_beams)
-            ]
-            total_length = sum(lengths)
-            total_volume = sum(volumes)
-            level.beam_width = sum(beam.width for beam in active_beams) / len(active_beams)
-            level.beam_depth = sum(beam.depth for beam in active_beams) / len(active_beams)
-            level.beam_length = total_length / len(active_beams)
-            level.beam_volume_override = total_volume
-            weights = volumes if total_volume > 1e-9 else lengths
-            total_weight = sum(weights)
-            if total_weight > 1e-9:
-                centroids = []
-                for beam in active_beams:
-                    start, end = _beam_plan_points(beam)
-                    centroids.append(((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0))
-                level.beam_center_x = sum(
-                    weights[index] * centroids[index][0] for index in range(len(active_beams))
-                ) / total_weight
-                level.beam_center_y = sum(
-                    weights[index] * centroids[index][1] for index in range(len(active_beams))
-                ) / total_weight
+        if not segments:
+            continue
+        lengths = [length for _beam, length, _center in segments]
+        volumes = [
+            length * max(0.0, beam.width) * max(0.0, beam.depth)
+            for beam, length, _center in segments
+        ]
+        total_volume = sum(volumes)
+        level.beam_width = sum(beam.width for beam, _length, _center in segments) / len(segments)
+        level.beam_depth = sum(beam.depth for beam, _length, _center in segments) / len(segments)
+        level.beam_length = sum(lengths) / len(segments)
+        level.beam_volume_override = total_volume
+        weights = volumes if total_volume > 1e-9 else lengths
+        total_weight = sum(weights)
+        if total_weight > 1e-9:
+            level.beam_center_x = sum(
+                weights[index] * segments[index][2][0] for index in range(len(segments))
+            ) / total_weight
+            level.beam_center_y = sum(
+                weights[index] * segments[index][2][1] for index in range(len(segments))
+            ) / total_weight
 
 
 def render_beams() -> None:
@@ -928,17 +1106,20 @@ def render_beams() -> None:
     axis_options = [(index, f"Eje {index + 1}") for index in range(5)]
     station_options = [(index, chr(65 + index)) for index in range(4)]
     cards = []
+    overlaps = _beam_overlaps()
     for beam in beams:
         beam_length = _beam_length(beam)
-        card_class = "beam-model-card is-invalid" if beam_length <= 1e-9 else "beam-model-card"
-        beam_note = (
-            "Selecciona dos nodos distintos."
-            if beam_length <= 1e-9
-            else (
+        overlap = overlaps.get(beam.id)
+        card_class = "beam-model-card is-invalid" if beam_length <= 1e-9 or overlap else "beam-model-card"
+        if beam_length <= 1e-9:
+            beam_note = "Selecciona dos nodos distintos."
+        elif overlap:
+            beam_note = f"Se superpone con {escape(overlap)}: el tramo repetido no se cuenta en el metrado."
+        else:
+            beam_note = (
                 f"Longitud {format_number(beam_length, 2)} m · "
                 f"Área A = b·h = {format_number(beam.width * beam.depth, 3)} m²"
             )
-        )
         start_axis_options = "".join(
             f'<option value="{value}"{" selected" if value == beam.start_axis else ""}>{label}</option>'
             for value, label in axis_options
@@ -987,8 +1168,8 @@ def render_beams() -> None:
     by_id("beam-list").innerHTML = "".join(cards) if cards else (
         '<p class="beam-empty">Aún no hay vigas modeladas. Añade una y selecciona sus dos nodos.</p>'
     )
-    by_id("beam-count").textContent = f"{len(beams)}/24"
-    by_id("add-beam").disabled = len(beams) >= 24
+    by_id("beam-count").textContent = f"{len(beams)}/{MAX_BEAMS}"
+    by_id("add-beam").disabled = len(beams) >= MAX_BEAMS
 
 
 def _slab_is_active(slab: SlabPanel, level_index: int) -> bool:
@@ -1014,15 +1195,18 @@ def get_slab(slab_id: str) -> SlabPanel | None:
 
 
 def sync_slabs_to_load_levels() -> None:
-    """Transfiere área, volumen y centro de masa de los paños modelados."""
+    """Transfiere área, volumen y centro de masa de los paños modelados.
+
+    Si dos paños se superponen en un nivel, el área común se cuenta una vez.
+    """
 
     for level_index, level in enumerate(load_levels):
-        active_slabs = [slab for slab in slabs if _slab_is_active(slab, level_index)]
+        panels = _slab_counted_panels(level_index)
         level.slab_volume_override = 0.0 if slabs else None
-        if not active_slabs:
+        if not panels:
             continue
-        areas = [_slab_area(slab) for slab in active_slabs]
-        volumes = [areas[index] * max(0.0, slab.thickness) for index, slab in enumerate(active_slabs)]
+        areas = [area for _slab, area, _center in panels]
+        volumes = [area * max(0.0, slab.thickness) for slab, area, _center in panels]
         total_area = sum(areas)
         total_volume = sum(volumes)
         if total_area <= 1e-9:
@@ -1032,17 +1216,8 @@ def sync_slabs_to_load_levels() -> None:
         level.slab_volume_override = total_volume
         weights = volumes if total_volume > 1e-9 else areas
         total_weight = sum(weights)
-        centroids = []
-        for slab in active_slabs:
-            points = _slab_plan_points(slab)
-            centroids.append(
-                (
-                    (points[0][0] + points[2][0]) / 2.0,
-                    (points[0][1] + points[2][1]) / 2.0,
-                )
-            )
-        level.center_x = sum(weights[index] * centroids[index][0] for index in range(len(active_slabs))) / total_weight
-        level.center_y = sum(weights[index] * centroids[index][1] for index in range(len(active_slabs))) / total_weight
+        level.center_x = sum(weights[index] * panels[index][2][0] for index in range(len(panels))) / total_weight
+        level.center_y = sum(weights[index] * panels[index][2][1] for index in range(len(panels))) / total_weight
 
 
 def render_slabs() -> None:
@@ -1051,9 +1226,11 @@ def render_slabs() -> None:
     axis_options = [(index, f"Eje {index + 1}") for index in range(5)]
     station_options = [(index, chr(65 + index)) for index in range(4)]
     cards = []
+    overlaps = _slab_overlaps()
     for slab in slabs:
         slab_area = _slab_area(slab)
-        card_class = "slab-model-card is-invalid" if slab_area <= 1e-9 else "slab-model-card"
+        overlap = overlaps.get(slab.id)
+        card_class = "slab-model-card is-invalid" if slab_area <= 1e-9 or overlap else "slab-model-card"
 
         def options(items, selected_value):
             return "".join(
@@ -1070,6 +1247,8 @@ def render_slabs() -> None:
         slab_note = (
             "Selecciona dos esquinas opuestas para formar un paño."
             if slab_area <= 1e-9
+            else f"Se superpone con {escape(overlap)}: el área repetida no se cuenta en el metrado."
+            if overlap
             else (
                 f"Área {format_number(slab_area, 2)} m² · volumen "
                 f"{format_number(slab_area * slab.thickness, 3)} m³"
@@ -1098,8 +1277,8 @@ def render_slabs() -> None:
     by_id("slab-list").innerHTML = "".join(cards) if cards else (
         '<p class="beam-empty">Aún no hay losas modeladas. Añade un paño y selecciona sus dos esquinas.</p>'
     )
-    by_id("slab-count").textContent = f"{len(slabs)}/16"
-    by_id("add-slab").disabled = len(slabs) >= 16
+    by_id("slab-count").textContent = f"{len(slabs)}/{MAX_SLABS}"
+    by_id("add-slab").disabled = len(slabs) >= MAX_SLABS
 
 
 def _rigidity_level_name(index: int) -> str:
@@ -1278,7 +1457,7 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
     # Mismo orden que en la vista isométrica: cada grupo ocupa su eje y sus
     # unidades se distribuyen en estaciones A, B, C... de arriba hacia abajo.
     for axis_index, (_axis, axis_units, axis_total) in enumerate(layout):
-        for station_index, (material, shape, _direction) in enumerate(axis_units):
+        for material, shape, _direction, station_index in axis_units:
             if station_index >= len(ys):
                 break
             x_px, y_px = to_px((xs[axis_index], ys[-1 - station_index]))
@@ -1344,13 +1523,13 @@ def render_frame_diagram() -> None:
 
     # El edificio se construye desde la base: columnas del piso y luego su losa.
     for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
-        for station_index, (_material, _shape, _direction) in enumerate(axis_units):
+        for _material, _shape, _direction, station_index in axis_units:
             base = point(axis_positions[axis_index], station_positions[station_index], 0)
             parts.append(_iso_footing(*base))
 
     for level_index in range(1, total_levels + 1):
         for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
-            for station_index, (material, _shape, _direction) in enumerate(axis_units):
+            for material, _shape, _direction, station_index in axis_units:
                 base = point(axis_positions[axis_index], station_positions[station_index], level_index - 1)
                 top = point(axis_positions[axis_index], station_positions[station_index], level_index)
                 # Deja una interrupción visible en cada losa: cada tramo representa
@@ -1413,7 +1592,7 @@ def render_frame_diagram() -> None:
         )
         if level_index < total_levels:
             for axis_index, (_axis, axis_units, _axis_total) in enumerate(layout):
-                for station_index, (_material, _shape, _direction) in enumerate(axis_units):
+                for _material, _shape, _direction, station_index in axis_units:
                     joint = point(axis_positions[axis_index], station_positions[station_index], level_index)
                     joint_parts.append(
                         f'<circle class="iso-column-joint" cx="{joint[0]:.1f}" cy="{joint[1]:.1f}" r="4.2"/>'
@@ -1447,7 +1626,7 @@ def render_frame_diagram() -> None:
             f'<text class="iso-grid-label" x="{label_point[0]:.1f}" y="{label_point[1] - 5:.1f}" '
             f'text-anchor="middle">{escape(_display_axis(axis))}</text>'
         )
-        for station_index, (material, shape, _direction) in enumerate(axis_units):
+        for material, shape, _direction, station_index in axis_units:
             top = point(axis_positions[axis_index], station_positions[station_index], top_level)
             parts.append(_iso_shape_marker(top, material, shape, ux, uy))
         hidden_count = axis_total - len(axis_units)
@@ -1554,7 +1733,9 @@ def render_plan_diagram() -> None:
     layout = geometry["layout"]
     active_layout = [item for item in layout if item[2] > 0]
     total_columns = sum(axis_total for _axis, _axis_units, axis_total in active_layout)
-    axis_names = ", ".join(_display_axis(axis) for axis, _axis_units, _axis_total in active_layout)
+    axis_names = ", ".join(
+        _display_axis(label) for label in dict.fromkeys(_normalized_axis(group.axis) for group in groups)
+    )
     if geometry["has_wing"]:
         peak_x, peak_y = geometry["peak"]
         wing_detail = (
@@ -1889,8 +2070,8 @@ def _analysis_steps_html(result: dict) -> str:
     step3_blocks = []
     for frame in frames:
         formula = (
-            f"r_{frame['axis']} = -({format_number(frame['x0'], 3)} - {format_number(analysis_cm_x, 3)})·sin({format_number(frame['beta'], 1)}°) "
-            f"+ ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
+            f"r_{frame['axis']} = ({format_number(frame['x0'], 3)} - {format_number(analysis_cm_x, 3)})·sin({format_number(frame['beta'], 1)}°) "
+            f"- ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
         )
         step3_blocks.append(
             f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
@@ -1900,7 +2081,7 @@ def _analysis_steps_html(result: dict) -> str:
     step3 = f"""
       <div class="step-block">
         <h4><span class="step-badge">3</span>Brazos r<sub>j</sub> y matrices de transformación [G<sub>j</sub>]</h4>
-        <p><code>r = -(x₀-x_CM)·sinβ + (y₀-y_CM)·cosβ</code>. [G] relaciona el desplazamiento del eje con {{u<sub>x</sub>, u<sub>y</sub>, θ}} del diafragma, nivel a nivel.</p>
+        <p><code>r = (x₀-x_CM)·sinβ − (y₀-y_CM)·cosβ</code> (giro θ positivo antihorario). [G] relaciona el desplazamiento del eje con {{u<sub>x</sub>, u<sub>y</sub>, θ}} del diafragma, nivel a nivel.</p>
         {"".join(step3_blocks)}
       </div>
     """
@@ -1975,9 +2156,9 @@ def _analysis_steps_html(result: dict) -> str:
       <div class="step-block">
         <h4><span class="step-badge">7</span>Centro de rigidez (CR)</h4>
         <p>Se anula el acople traslación-giro de la matriz de nivel 1: a_xx={_compact_number(a_xx)}, a_xy={_compact_number(a_xy)}, a_yy={_compact_number(a_yy)}, b_x={_compact_number(b_x)}, b_y={_compact_number(b_y)} ({stiffness_unit}, referidos al nivel 1).</p>
-        <div class="step-formula">q_x = (-b_x·a_yy + a_xy·b_y) / (a_xx·a_yy - a_xy²)
-q_y = (a_xy·b_x - a_xx·b_y) / (a_xx·a_yy - a_xy²)
-CR = (x_CM + q_y ; y_CM - q_x)</div>
+        <div class="step-formula">dx = (a_xx·b_y - a_xy·b_x) / (a_xx·a_yy - a_xy²)
+dy = (a_xy·b_y - a_yy·b_x) / (a_xx·a_yy - a_xy²)
+CR = (x_CM + dx ; y_CM + dy)</div>
         <p><strong>{escape(cr_text)}</strong></p>
       </div>
     """
@@ -2317,8 +2498,8 @@ def render_action_charts(result: dict) -> None:
         by_id("analysis-column-moment-chart").innerHTML = _bar_chart_svg(moment_rows, "kN·m", "chart-bar-violet")
     else:
         by_id("analysis-column-moment-chart").innerHTML = (
-            '<p class="matrix-caption">Este eje no tiene ambos extremos empotrado–rígido, '
-            "por lo que no se calcula el momento de extremo Vh/2.</p>"
+            '<p class="matrix-caption">Este eje tiene ambos extremos articulados: '
+            "no aporta rigidez lateral ni desarrolla momento de extremo.</p>"
         )
 
 
@@ -2342,6 +2523,256 @@ def _clear_analysis_results(message: str) -> None:
     by_id("analysis-floor-forces-chart").innerHTML = placeholder
     by_id("analysis-story-shear-chart").innerHTML = placeholder
     by_id("analysis-column-moment-chart").innerHTML = placeholder
+    by_id("analysis-modal").innerHTML = placeholder
+    by_id("analysis-modal-mode").innerHTML = ""
+
+
+MODAL_DIRECTION_LABELS = {"X": "Traslación X", "Y": "Traslación Y", "RZ": "Torsión"}
+
+
+def _analysis_level_masses() -> list[dict[str, float]]:
+    """Masa traslacional, inercia rotacional y posición del CM de cada diafragma.
+
+    Se toman del metrado (peso sísmico P = CM + %CV) para que el análisis modal
+    use exactamente las mismas masas que la fuerza estática.
+    """
+    if len(load_levels) != analysis_level_count:
+        raise ValueError("Los niveles del metrado no coinciden con los del análisis.")
+    masses = []
+    for level in load_levels:
+        properties = _level_seismic_mass_properties(
+            level, column_takeoff_rows(level.height), loads_category
+        )
+        mass = float(properties["mass"])
+        if mass <= 0:
+            raise ValueError(f"El nivel {level.label} no tiene peso sísmico; completa su metrado.")
+        inertia = mass * (float(level.plan_x) ** 2 + float(level.plan_y) ** 2) / 12.0
+        masses.append(
+            {
+                "label": level.label,
+                "weight": float(properties["weight"]),
+                "mass": mass,
+                "inertia": inertia,
+                "center_x": float(properties["center_x"]),
+                "center_y": float(properties["center_y"]),
+                "dx": float(properties["center_x"]) - analysis_cm_x,
+                "dy": float(properties["center_y"]) - analysis_cm_y,
+            }
+        )
+    return masses
+
+
+def _compute_modal(result: dict) -> tuple[dict | None, list[dict[str, float]] | None, str]:
+    try:
+        masses = _analysis_level_masses()
+        modal = modal_analysis(result["global_matrix"], masses)
+    except (ValueError, ZeroDivisionError) as error:
+        return None, None, str(error)
+    return modal, masses, ""
+
+
+def _modes_for_ratio(modes: list[dict], key: str, target: float = 0.90) -> int | None:
+    for index, mode in enumerate(modes):
+        if mode["cumulative"][key] >= target - 1e-9:
+            return index + 1
+    return None
+
+
+def _first_mode(modes: list[dict], key: str) -> tuple[int, dict] | None:
+    candidates = [(index, mode) for index, mode in enumerate(modes) if mode["dominant"] == key]
+    if not candidates:
+        return None
+    return max(candidates[:3], key=lambda item: item[1]["mass_ratio"][key])
+
+
+def _mode_shape_svg(mode: dict, levels: int) -> str:
+    heights = analysis_heights[:levels]
+    total_height = sum(heights) or 1.0
+    cumulative = [0.0]
+    for height in heights:
+        cumulative.append(cumulative[-1] + height)
+    ux = [0.0] + [mode["shape"][3 * level] for level in range(levels)]
+    uy = [0.0] + [mode["shape"][3 * level + 1] for level in range(levels)]
+    center_x, half_width = 120.0, 82.0
+    top, bottom = 22.0, 252.0
+
+    def point(value: float, height: float) -> tuple[float, float]:
+        return center_x + value * half_width, bottom - height / total_height * (bottom - top)
+
+    def polyline(values: list[float], css: str) -> str:
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (point(v, h) for v, h in zip(values, cumulative)))
+        return f'<polyline class="{css}" points="{points}"/>'
+
+    parts = [
+        '<svg viewBox="0 0 240 280" role="img" aria-label="Forma de modo por nivel">',
+        f'<line class="modal-shape-ref" x1="{center_x}" y1="{top - 6}" x2="{center_x}" y2="{bottom}"/>',
+        f'<line class="modal-shape-ref" x1="{center_x - half_width}" y1="{bottom}" x2="{center_x + half_width}" y2="{bottom}"/>',
+        polyline(ux, "modal-shape-x"),
+        polyline(uy, "modal-shape-y"),
+    ]
+    for level in range(1, levels + 1):
+        for values, css in ((ux, "modal-shape-node-x"), (uy, "modal-shape-node-y")):
+            x_pos, y_pos = point(values[level], cumulative[level])
+            parts.append(f'<circle class="{css}" cx="{x_pos:.1f}" cy="{y_pos:.1f}" r="3.6"/>')
+        _, label_y = point(0.0, cumulative[level])
+        parts.append(f'<text class="modal-shape-label" x="4" y="{label_y + 3:.1f}">N{level}</text>')
+    parts.append(f'<text class="modal-shape-label" x="{center_x - half_width}" y="{bottom + 16}" text-anchor="middle">−1</text>')
+    parts.append(f'<text class="modal-shape-label" x="{center_x + half_width}" y="{bottom + 16}" text-anchor="middle">+1</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_modal_results(result: dict, modal: dict | None, masses: list | None, error: str) -> None:
+    global analysis_modal_mode
+    container = by_id("analysis-modal")
+    selector = by_id("analysis-modal-mode")
+    if modal is None:
+        selector.innerHTML = ""
+        container.innerHTML = (
+            '<p class="matrix-caption">El análisis modal necesita la masa de cada nivel, tomada del Metrado. '
+            f"{escape(error)}</p>"
+        )
+        return
+
+    modes = modal["modes"]
+    levels = result["levels"]
+    if not 0 <= analysis_modal_mode < len(modes):
+        analysis_modal_mode = 0
+    selector.innerHTML = "".join(
+        f'<option value="{index}"{" selected" if index == analysis_modal_mode else ""}>'
+        f"Modo {index + 1} · T = {format_number(mode['period'], 3)} s</option>"
+        for index, mode in enumerate(modes)
+    )
+
+    first_x = _first_mode(modes, "X")
+    first_y = _first_mode(modes, "Y")
+    needed_x = _modes_for_ratio(modes, "X")
+    needed_y = _modes_for_ratio(modes, "Y")
+    needed = max(needed_x or 0, needed_y or 0, min(3, len(modes)))
+    total_weight = sum(item["weight"] for item in masses)
+
+    def metric(label: str, value: str, unit: str) -> str:
+        return f'<div class="analysis-metric"><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>'
+
+    summary = "".join(
+        (
+            metric("Periodo fundamental T₁", format_number(modes[0]["period"], 3), f"s · {MODAL_DIRECTION_LABELS[modes[0]['dominant']]}"),
+            metric("Periodo dominante X", format_number(first_x[1]["period"], 3) if first_x else "—", f"s · modo {first_x[0] + 1}" if first_x else "sin modo en X"),
+            metric("Periodo dominante Y", format_number(first_y[1]["period"], 3) if first_y else "—", f"s · modo {first_y[0] + 1}" if first_y else "sin modo en Y"),
+            metric("Masa total", format_number(sum(item["mass"] for item in masses), 2), f"t · P = {format_number(total_weight, 1)} kN"),
+        )
+    )
+
+    check_ok = needed_x is not None and needed_y is not None
+    check_text = (
+        f"E.030 art. 29.1.2: con los primeros {needed} modos la masa efectiva acumulada supera el 90 % "
+        f"en X ({format_number(modes[needed - 1]['cumulative']['X'] * 100, 1)} %) y en Y "
+        f"({format_number(modes[needed - 1]['cumulative']['Y'] * 100, 1)} %); considera además al menos los 3 primeros modos."
+        if check_ok
+        else "La masa efectiva no alcanza el 90 % en ambas direcciones; revisa la rigidez y la distribución de masas."
+    )
+
+    rows = []
+    for index, mode in enumerate(modes):
+        ratio = mode["mass_ratio"]
+        total = mode["cumulative"]
+        selected = ' class="is-selected"' if index == analysis_modal_mode else ""
+        rows.append(
+            f"<tr{selected}><td>{index + 1}</td><td>{format_number(mode['period'], 4)}</td>"
+            f"<td>{format_number(mode['frequency'], 3)}</td><td>{format_number(mode['omega'], 3)}</td>"
+            f"<td>{MODAL_DIRECTION_LABELS[mode['dominant']]}</td>"
+            f"<td>{format_number(mode['participation']['X'], 3)}</td><td>{format_number(mode['participation']['Y'], 3)}</td>"
+            f"<td>{format_number(ratio['X'] * 100, 2)}</td><td>{format_number(ratio['Y'] * 100, 2)}</td><td>{format_number(ratio['RZ'] * 100, 2)}</td>"
+            f"<td>{format_number(total['X'] * 100, 2)}</td><td>{format_number(total['Y'] * 100, 2)}</td><td>{format_number(total['RZ'] * 100, 2)}</td></tr>"
+        )
+
+    selected_mode = modes[analysis_modal_mode]
+    shape_rows = []
+    for level in range(levels - 1, -1, -1):
+        shape_rows.append(
+            f"<tr><td>Nivel {level + 1}</td><td>{format_number(selected_mode['shape'][3 * level], 4)}</td>"
+            f"<td>{format_number(selected_mode['shape'][3 * level + 1], 4)}</td>"
+            f"<td>{format_number(selected_mode['shape'][3 * level + 2], 5)}</td></tr>"
+        )
+
+    mass_rows = []
+    for level in range(levels - 1, -1, -1):
+        item = masses[level]
+        mass_rows.append(
+            f"<tr><td>{escape(str(item['label']))}</td><td>{format_number(item['weight'], 2)}</td>"
+            f"<td>{format_number(item['mass'], 3)}</td><td>{format_number(item['inertia'], 2)}</td>"
+            f"<td>{format_number(item['center_x'], 3)}</td><td>{format_number(item['center_y'], 3)}</td></tr>"
+        )
+
+    buttons = []
+    if first_x:
+        buttons.append(
+            f'<button class="button" type="button" data-action="use-modal-period" data-value="{input_number(first_x[1]["period"])}">'
+            f"Usar T<sub>X</sub> = {format_number(first_x[1]['period'], 3)} s en el metrado</button>"
+        )
+    if first_y:
+        buttons.append(
+            f'<button class="button" type="button" data-action="use-modal-period" data-value="{input_number(first_y[1]["period"])}">'
+            f"Usar T<sub>Y</sub> = {format_number(first_y[1]['period'], 3)} s en el metrado</button>"
+        )
+
+    container.innerHTML = f"""
+      <div class="analysis-summary modal-summary">{summary}</div>
+      <p class="modal-check {'is-ok' if check_ok else 'is-warn'}">{escape(check_text)}</p>
+      <div class="modal-layout">
+        <div class="modal-shape">
+          {_mode_shape_svg(selected_mode, levels)}
+          <p class="modal-legend"><span><i style="background:var(--teal)"></i>φ<sub>x</sub></span><span><i style="background:var(--amber)"></i>φ<sub>y</sub></span></p>
+        </div>
+        <div>
+          <p class="matrix-caption">Modo {analysis_modal_mode + 1}: T = {format_number(selected_mode['period'], 4)} s · f = {format_number(selected_mode['frequency'], 3)} Hz · ω = {format_number(selected_mode['omega'], 3)} rad/s. Forma normalizada con la mayor traslación = 1.</p>
+          <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>φ<sub>x</sub></th><th>φ<sub>y</sub></th><th>φ<sub>θ</sub> (rad/m)</th></tr></thead><tbody>{''.join(shape_rows)}</tbody></table></div>
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Modo</th><th>T (s)</th><th>f (Hz)</th><th>ω (rad/s)</th><th>Tipo</th><th>Γ<sub>x</sub></th><th>Γ<sub>y</sub></th><th>%M<sub>x</sub></th><th>%M<sub>y</sub></th><th>%M<sub>θ</sub></th><th>Σ%M<sub>x</sub></th><th>Σ%M<sub>y</sub></th><th>Σ%M<sub>θ</sub></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+      <p class="matrix-caption" style="margin-top:12px">Masas por diafragma (del Metrado): m = P/g y J = m(a² + b²)/12 con las dimensiones de planta de cada nivel.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>P (kN)</th><th>m (t)</th><th>J (t·m²)</th><th>x<sub>CM</sub> (m)</th><th>y<sub>CM</sub> (m)</th></tr></thead><tbody>{''.join(mass_rows)}</tbody></table></div>
+      <div class="modal-actions">{''.join(buttons)}</div>
+    """
+
+
+def _flexibility_modal_steps_html(result: dict, modal: dict | None, masses: list | None) -> str:
+    levels = result["levels"]
+    dof_labels: list[str] = []
+    for level in range(levels):
+        dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
+    try:
+        flexibility = invert_matrix(result["global_matrix"])
+    except ValueError:
+        return ""
+    check = [sum(f * p for f, p in zip(row, result["force_vector"])) for row in flexibility]
+    error = max(abs(a - b) for a, b in zip(check, result["displacement_vector"]))
+    step8 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">8</span>Matriz de flexibilidad [F] = [K<sub>P3D</sub>]<sup>−1</sup></h4>
+        <p>Cada columna j de [F] es el desplazamiento de todos los GDL ante una carga unitaria en el GDL j (m/kN y rad/kN·m). Comprobación: {{U}} = [F]{{P}} reproduce la solución con un error máximo de {_compact_number(error)}.</p>
+        {_matrix_table(flexibility, dof_labels)}
+      </div>
+    """
+    if modal is None:
+        return step8
+    modes = modal["modes"]
+    eigen_rows = "".join(
+        f"<tr><td>{index + 1}</td><td>{_compact_number(mode['omega'] ** 2)}</td><td>{format_number(mode['omega'], 4)}</td>"
+        f"<td>{format_number(mode['frequency'], 4)}</td><td>{format_number(mode['period'], 4)}</td></tr>"
+        for index, mode in enumerate(modes)
+    )
+    step9 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">9</span>Matriz de masas [M] y problema de valores propios</h4>
+        <p>Por nivel: m en Ux y Uy, y J<sub>O</sub> = J<sub>CM</sub> + m(dx² + dy²) en Rz, con acoples −m·dy y m·dx cuando el CM del metrado no coincide con el punto de referencia ({format_number(analysis_cm_x, 3)} ; {format_number(analysis_cm_y, 3)}) m.</p>
+        {_matrix_table(modal['mass_matrix'], dof_labels)}
+        <p>Se resuelve <code>([K] − ω²[M]){{φ}} = 0</code> (Cholesky de [M] + método de Jacobi). Luego T = 2π/ω y f = ω/2π.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Modo</th><th>ω² (1/s²)</th><th>ω (rad/s)</th><th>f (Hz)</th><th>T (s)</th></tr></thead><tbody>{eigen_rows}</tbody></table></div>
+        <p>Factor de participación <code>Γ = φᵀ[M]{{r}} / φᵀ[M]φ</code> y masa efectiva <code>M* = (φᵀ[M]{{r}})² / φᵀ[M]φ</code>, con {{r}} el vector de influencia de cada dirección.</p>
+      </div>
+    """
+    return step8 + step9
 
 
 def render_analysis_results() -> None:
@@ -2410,14 +2841,20 @@ def render_analysis_results() -> None:
             )
     by_id("analysis-frames").innerHTML = f"""
       <h3>Distribución de acciones por eje</h3>
-      <p>El cortante de cada eje se reparte entre sus columnas iguales. El momento Vh/2 solo se muestra para uniones empotrada–rígida.</p>
+      <p>El cortante de cada eje se reparte entre sus columnas iguales. Momento de extremo: Vh/2 con ambos extremos empotrados y Vh en el extremo fijo cuando el otro está articulado.</p>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>r (m)</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{''.join(frame_rows)}</tbody></table></div>
     """
 
-    _update_details_panel("analysis-steps", ".steps-card", _analysis_steps_html(result))
+    modal, masses, modal_error = _compute_modal(result)
+    _update_details_panel(
+        "analysis-steps",
+        ".steps-card",
+        _analysis_steps_html(result) + _flexibility_modal_steps_html(result, modal, masses),
+    )
 
     render_deformation_views(result)
     render_action_charts(result)
+    render_modal_results(result, modal, masses, modal_error)
 
 
 def load_level_card(level: LevelLoad, index: int) -> str:
@@ -3085,7 +3522,10 @@ def apply_loads_to_analysis() -> None:
         site = _build_site_params(assessment)
         column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
         result = static_seismic_forces(load_levels, site, column_weights)
-    except (ValueError, ZeroDivisionError):
+    except (ValueError, ZeroDivisionError) as error:
+        warning = by_id("loads-warning")
+        warning.hidden = False
+        warning.textContent = f"No se pudo aplicar al análisis: {error}"
         return
     count = min(len(load_levels), 12)
     analysis_level_count = count
@@ -3115,6 +3555,18 @@ def apply_loads_to_analysis() -> None:
     render_analysis_inputs()
     render_analysis_results()
     set_stage("analysis")
+
+
+def use_modal_period(period: float) -> None:
+    """Lleva el periodo del análisis modal al metrado (T manual) y recalcula."""
+    global loads_period_mode, loads_period_manual
+    if not isfinite(period) or period <= 0:
+        return
+    loads_period_mode = "manual"
+    loads_period_manual = round(period, 4)
+    render_loads_site_inputs()
+    render_loads_results()
+    set_stage("loads")
 
 
 STAGE_INTRO = {
@@ -3251,26 +3703,69 @@ def change_units(target: str) -> None:
     render_analysis_results()
 
 
+def _normalized_axis(axis: str) -> str:
+    clean = str(axis).strip().upper()
+    return clean[4:].strip() if clean.startswith("EJE ") else clean
+
+
+def _next_frame_defaults() -> dict[str, object]:
+    """Siguiente pórtico libre de la retícula: ejes 1–5 en Y y luego A–D en X."""
+
+    xs, ys = _fixed_plan_coordinates()
+    used = {_normalized_axis(group.axis) for group in groups}
+    for index in range(GRID_AXIS_COUNT):
+        label = str(index + 1)
+        if label not in used:
+            return {
+                "axis": label,
+                "direction": "Y",
+                "beta": 90.0,
+                "x0": xs[index],
+                "y0": (ys[0] + ys[-1]) / 2.0,
+                "quantity": GRID_STATION_COUNT,
+            }
+    for index in range(GRID_STATION_COUNT):
+        label = chr(65 + index)
+        if label not in used:
+            return {
+                "axis": label,
+                "direction": "X",
+                "beta": 0.0,
+                "x0": (xs[0] + xs[-1]) / 2.0,
+                "y0": ys[-1 - index],
+                "quantity": GRID_AXIS_COUNT,
+            }
+    return {
+        "axis": str(next_group_number),
+        "direction": "X",
+        "beta": 0.0,
+        "x0": 0.0,
+        "y0": 0.0,
+        "quantity": 1,
+    }
+
+
 def add_group() -> None:
     global next_group_number
-    if len(groups) >= 8:
+    if len(groups) >= MAX_GROUPS:
         return
     shape = "circle" if len(groups) % 2 else "square"
+    defaults = _next_frame_defaults()
     groups.append(
         ColumnGroup(
             id=f"c{next_group_number}",
-            quantity=1,
+            quantity=int(defaults["quantity"]),
             shape=shape,
             dimension=400.0 if units == "SI" else 40.0,
             fc=21.0 if units == "SI" else 210.0,
             base="fixed",
             top="fixed",
             material="concrete",
-            direction="X",
-            axis=str(next_group_number),
-            x0=0.0,
-            y0=float(next_group_number - 1) * 4.0,
-            beta=0.0,
+            direction=str(defaults["direction"]),
+            axis=str(defaults["axis"]),
+            x0=float(defaults["x0"]),
+            y0=float(defaults["y0"]),
+            beta=float(defaults["beta"]),
         )
     )
     next_group_number += 1
@@ -3281,22 +3776,47 @@ def add_group() -> None:
     render_analysis_results()
 
 
+def _grid_beam_edges() -> list[tuple[int, int, int, int]]:
+    """Todos los tramos de la retícula: primero en X (por A–D), luego en Y (por 1–5)."""
+
+    edges = [
+        (axis, station, axis + 1, station)
+        for station in range(GRID_STATION_COUNT)
+        for axis in range(GRID_AXIS_COUNT - 1)
+    ]
+    edges += [
+        (axis, station, axis, station + 1)
+        for axis in range(GRID_AXIS_COUNT)
+        for station in range(GRID_STATION_COUNT - 1)
+    ]
+    return edges
+
+
+def _beam_key(beam: BeamMember) -> tuple[int, int, int, int]:
+    start = (beam.start_axis, beam.start_station)
+    end = (beam.end_axis, beam.end_station)
+    first, second = sorted((start, end))
+    return (*first, *second)
+
+
 def add_beam() -> None:
     global next_beam_number
 
-    if len(beams) >= 24:
+    if len(beams) >= MAX_BEAMS:
         return
-    beam_index = len(beams)
-    start_axis = beam_index % 4
-    station = (beam_index // 4) % 4
+    used = {_beam_key(beam) for beam in beams}
+    free = [edge for edge in _grid_beam_edges() if edge not in used]
+    if not free:
+        return
+    start_axis, start_station, end_axis, end_station = free[0]
     beams.append(
         BeamMember(
             id=f"b{next_beam_number}",
             label=f"V-{next_beam_number:02d}",
             start_axis=start_axis,
-            start_station=station,
-            end_axis=start_axis + 1,
-            end_station=station,
+            start_station=start_station,
+            end_axis=end_axis,
+            end_station=end_station,
             width=DEFAULT_BEAM_WIDTH,
             depth=DEFAULT_BEAM_DEPTH,
             level_scope="all",
@@ -3313,11 +3833,22 @@ def add_beam() -> None:
 def add_slab() -> None:
     global next_slab_number
 
-    if len(slabs) >= 16:
+    if len(slabs) >= MAX_SLABS:
         return
-    slab_index = len(slabs)
-    start_axis = slab_index % 4
-    start_station = (slab_index // 4) % 3
+    used = {
+        (min(slab.start_axis, slab.end_axis), min(slab.start_station, slab.end_station))
+        for slab in slabs
+        if abs(slab.end_axis - slab.start_axis) == 1 and abs(slab.end_station - slab.start_station) == 1
+    }
+    free = [
+        (axis, station)
+        for station in range(GRID_STATION_COUNT - 1)
+        for axis in range(GRID_AXIS_COUNT - 1)
+        if (axis, station) not in used
+    ]
+    if not free:
+        return
+    start_axis, start_station = free[0]
     slabs.append(
         SlabPanel(
             id=f"s{next_slab_number}",
@@ -3493,6 +4024,8 @@ def handle_click(event):
             configure_building_levels(len(load_levels))
     elif action == "apply-loads":
         apply_loads_to_analysis()
+    elif action == "use-modal-period":
+        use_modal_period(parse_number(action_element.getAttribute("data-value"), 0.0))
 
 
 @when("input", "#calculator")
@@ -3750,6 +4283,11 @@ def handle_change(event):
     if field == "rigidity-plan-level":
         rigidity_plan_level = max(0, min(int(parse_number(target.value)), len(load_levels) - 1))
         render_plan_diagram()
+        return
+    if field == "analysis-modal-mode":
+        global analysis_modal_mode
+        analysis_modal_mode = int(parse_number(target.value, 0.0))
+        render_analysis_results()
         return
     if field == "analysis-deform-level":
         global analysis_view_level

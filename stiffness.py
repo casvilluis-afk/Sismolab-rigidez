@@ -19,6 +19,7 @@ MaterialType = Literal["concrete", "steel"]
 Direction = Literal["X", "Y"]
 
 MPA_TO_KGF_CM2 = 10.1971621298
+MAX_COLUMN_GROUPS = 20
 
 # Módulo elástico del acero: prácticamente constante en el rango elástico,
 # a diferencia del concreto (no depende de una resistencia ingresada por
@@ -200,8 +201,8 @@ def calculate_story(
     story_height_m: float,
     units: UnitSystem,
 ) -> dict[str, object]:
-    if not 1 <= len(groups) <= 8:
-        raise ValueError("Debe existir entre 1 y 8 grupos de columnas.")
+    if not 1 <= len(groups) <= MAX_COLUMN_GROUPS:
+        raise ValueError(f"Debe existir entre 1 y {MAX_COLUMN_GROUPS} grupos de columnas.")
     results = [calculate_group(group, story_height_m, units) for group in groups]
     totals_by_direction: dict[Direction, float] = {"X": 0.0, "Y": 0.0}
     for group, result in zip(groups, results):
@@ -442,9 +443,12 @@ def analyze_pseudotridimensional(
 
     for group, raw_group_stiffnesses in zip(groups, raw_stiffnesses):
         beta = radians(float(group.beta))
+        # Giro θ positivo antihorario: un punto (x, y) del diafragma se mueve
+        # u = ux − θ·(y − y_CM), v = uy + θ·(x − x_CM). Proyectado sobre la
+        # dirección del eje (cos β, sin β) da d = ux·cos β + uy·sin β + r·θ.
         lever_arms = [
-            -(float(group.x0) - centers_x[level]) * sin(beta)
-            + (float(group.y0) - centers_y[level]) * cos(beta)
+            (float(group.x0) - centers_x[level]) * sin(beta)
+            - (float(group.y0) - centers_y[level]) * cos(beta)
             for level in range(levels)
         ]
         story_stiffnesses = [
@@ -503,11 +507,12 @@ def analyze_pseudotridimensional(
     determinant = a_xx * a_yy - a_xy * a_xy
     center_rigidity = None
     if abs(determinant) > max(1e-12, (abs(a_xx) + abs(a_yy)) ** 2 * 1e-12):
-        q_x = (-b_x * a_yy + a_xy * b_y) / determinant
-        q_y = (a_xy * b_x - a_xx * b_y) / determinant
+        # Punto (x_CM + dx, y_CM + dy) donde una fuerza traslacional no genera giro.
+        offset_x = (a_xx * b_y - a_xy * b_x) / determinant
+        offset_y = (a_xy * b_y - a_yy * b_x) / determinant
         center_rigidity = {
-            "x": centers_x[0] + q_y,
-            "y": centers_y[0] - q_x,
+            "x": centers_x[0] + offset_x,
+            "y": centers_y[0] + offset_y,
         }
 
     displacements = []
@@ -534,13 +539,18 @@ def analyze_pseudotridimensional(
         floor_actions = _matvec(frame["local_matrix"], local_displacements)
         story_shears = [sum(floor_actions[level:]) for level in range(levels)]
         column_shears = [value / int(group.quantity) for value in story_shears]
+        # Momento máximo de extremo: doble curvatura (empotrado-rígido) Vh/2;
+        # con un extremo articulado todo el momento Vh se concentra en el otro.
         if group.base == "fixed" and group.top == "fixed":
-            end_moments = [
-                column_shears[level] * heights[level] / 2.0
-                for level in range(levels)
-            ]
+            moment_factor = 0.5
+        elif group.base == "pinned" and group.top == "pinned":
+            moment_factor = None
         else:
-            end_moments = [None for _ in range(levels)]
+            moment_factor = 1.0
+        end_moments = [
+            None if moment_factor is None else column_shears[level] * heights[level] * moment_factor
+            for level in range(levels)
+        ]
         frame.update(
             {
                 "local_displacements": local_displacements,
@@ -644,4 +654,236 @@ def assess_torsional_irregularity(
         "torsional": any(bool(case["applicable"]) and float(case["ratio"]) > 1.30 for case in cases),
         "extreme_torsional": any(bool(case["applicable"]) and float(case["ratio"]) > 1.50 for case in cases),
         "cases": cases,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Matriz de flexibilidad y análisis modal
+# ---------------------------------------------------------------------------
+
+
+def invert_matrix(matrix: list[list[float]]) -> list[list[float]]:
+    """Inversa por Gauss-Jordan con pivoteo parcial (matriz de flexibilidad)."""
+    size = len(matrix)
+    if size == 0 or any(len(row) != size for row in matrix):
+        raise ValueError("Sólo se puede invertir una matriz cuadrada.")
+    augmented = [
+        [float(value) for value in row] + [1.0 if i == j else 0.0 for j in range(size)]
+        for i, row in enumerate(matrix)
+    ]
+    scale = max((abs(value) for row in matrix for value in row), default=0.0)
+    tolerance = max(1e-10, scale * 1e-12)
+    for column in range(size):
+        pivot = max(range(column, size), key=lambda row: abs(augmented[row][column]))
+        if abs(augmented[pivot][column]) <= tolerance:
+            raise ValueError("La matriz es singular y no tiene inversa.")
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        pivot_value = augmented[column][column]
+        augmented[column] = [value / pivot_value for value in augmented[column]]
+        for row in range(size):
+            if row == column:
+                continue
+            factor = augmented[row][column]
+            if factor == 0.0:
+                continue
+            pivot_row = augmented[column]
+            augmented[row] = [a - factor * b for a, b in zip(augmented[row], pivot_row)]
+    return [row[size:] for row in augmented]
+
+
+def _cholesky(matrix: list[list[float]]) -> list[list[float]]:
+    size = len(matrix)
+    lower = _zero_matrix(size, size)
+    for i in range(size):
+        for j in range(i + 1):
+            total = matrix[i][j] - sum(lower[i][k] * lower[j][k] for k in range(j))
+            if i == j:
+                if total <= 0:
+                    raise ValueError("La matriz de masas debe ser definida positiva.")
+                lower[i][j] = sqrt(total)
+            else:
+                lower[i][j] = total / lower[j][j]
+    return lower
+
+
+def _lower_inverse(lower: list[list[float]]) -> list[list[float]]:
+    size = len(lower)
+    inverse = _zero_matrix(size, size)
+    for column in range(size):
+        for row in range(column, size):
+            total = 1.0 if row == column else 0.0
+            total -= sum(lower[row][k] * inverse[k][column] for k in range(column, row))
+            inverse[row][column] = total / lower[row][row]
+    return inverse
+
+
+def symmetric_eigen(matrix: list[list[float]], tolerance: float = 1e-12, max_sweeps: int = 100):
+    """Valores y vectores propios de una matriz simétrica (método de Jacobi cíclico)."""
+    size = len(matrix)
+    a = [list(map(float, row)) for row in matrix]
+    vectors = [[1.0 if i == j else 0.0 for j in range(size)] for i in range(size)]
+    scale = max((abs(a[i][i]) for i in range(size)), default=1.0) or 1.0
+    for _ in range(max_sweeps):
+        off = sum(a[i][j] ** 2 for i in range(size) for j in range(i + 1, size))
+        if off <= (tolerance * scale) ** 2:
+            break
+        for p in range(size - 1):
+            for q in range(p + 1, size):
+                if abs(a[p][q]) <= 1e-300:
+                    continue
+                theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q])
+                t = (1.0 if theta >= 0 else -1.0) / (abs(theta) + sqrt(theta * theta + 1.0))
+                c = 1.0 / sqrt(t * t + 1.0)
+                s = t * c
+                for k in range(size):
+                    akp, akq = a[k][p], a[k][q]
+                    a[k][p] = c * akp - s * akq
+                    a[k][q] = s * akp + c * akq
+                for k in range(size):
+                    apk, aqk = a[p][k], a[q][k]
+                    a[p][k] = c * apk - s * aqk
+                    a[q][k] = s * apk + c * aqk
+                for k in range(size):
+                    vkp, vkq = vectors[k][p], vectors[k][q]
+                    vectors[k][p] = c * vkp - s * vkq
+                    vectors[k][q] = s * vkp + c * vkq
+    values = [a[i][i] for i in range(size)]
+    columns = [[vectors[k][i] for k in range(size)] for i in range(size)]
+    return values, columns
+
+
+def diaphragm_mass_matrix(level_masses: list[dict[str, float]]) -> list[list[float]]:
+    """Matriz de masas con 3 GDL por nivel referidos al punto del análisis.
+
+    Cada nivel recibe {"mass": t, "inertia": t·m² respecto a su propio CM,
+    "dx", "dy": posición de su CM respecto al punto de referencia}. Con giro
+    antihorario, el CM se mueve u = ux − θ·dy, v = uy + θ·dx.
+    """
+    levels = len(level_masses)
+    matrix = _zero_matrix(3 * levels, 3 * levels)
+    for level, item in enumerate(level_masses):
+        mass = float(item["mass"])
+        inertia = float(item["inertia"])
+        dx = float(item.get("dx", 0.0))
+        dy = float(item.get("dy", 0.0))
+        if not all(isfinite(value) for value in (mass, inertia, dx, dy)):
+            raise ValueError(f"La masa del nivel {level + 1} debe contener números válidos.")
+        if mass <= 0 or inertia <= 0:
+            raise ValueError(f"El nivel {level + 1} necesita masa e inercia rotacional positivas.")
+        o = 3 * level
+        matrix[o][o] = mass
+        matrix[o + 1][o + 1] = mass
+        matrix[o][o + 2] = matrix[o + 2][o] = -mass * dy
+        matrix[o + 1][o + 2] = matrix[o + 2][o + 1] = mass * dx
+        matrix[o + 2][o + 2] = inertia + mass * (dx * dx + dy * dy)
+    return matrix
+
+
+def modal_analysis(
+    global_matrix: list[list[float]],
+    level_masses: list[dict[str, float]],
+) -> dict[str, object]:
+    """Resuelve [K]{φ} = ω²[M]{φ} y calcula la participación de masa por modo.
+
+    K en kN/m (kN·m/rad en giros) y M en t (t·m² en giros) entregan ω en rad/s.
+    """
+    size = len(global_matrix)
+    if size != 3 * len(level_masses):
+        raise ValueError("Debe existir una masa por cada nivel del modelo.")
+    mass_matrix = diaphragm_mass_matrix(level_masses)
+    lower = _cholesky(mass_matrix)
+    lower_inv = _lower_inverse(lower)
+    reduced = _matmul(_matmul(lower_inv, global_matrix), _transpose(lower_inv))
+    reduced = [
+        [0.5 * (reduced[i][j] + reduced[j][i]) for j in range(size)] for i in range(size)
+    ]
+    eigenvalues, eigenvectors = symmetric_eigen(reduced)
+    lower_inv_t = _transpose(lower_inv)
+
+    influence = {
+        "X": [1.0 if dof % 3 == 0 else 0.0 for dof in range(size)],
+        "Y": [1.0 if dof % 3 == 1 else 0.0 for dof in range(size)],
+        "RZ": [1.0 if dof % 3 == 2 else 0.0 for dof in range(size)],
+    }
+
+    # Modos repetidos (p. ej. X e Y con igual periodo): cualquier combinación
+    # es solución. Se rota cada grupo para alinear los modos con X, luego Y.
+    order = sorted(range(size), key=lambda index: eigenvalues[index])
+    eigenvalues = [eigenvalues[index] for index in order]
+    eigenvectors = [eigenvectors[index] for index in order]
+    lower_t = _transpose(lower)
+    load_x = _matvec(lower_t, influence["X"])
+    load_y = _matvec(lower_t, influence["Y"])
+    start = 0
+    while start < size:
+        end = start + 1
+        while end < size and abs(eigenvalues[end] - eigenvalues[start]) <= 1e-7 * max(abs(eigenvalues[start]), 1e-30):
+            end += 1
+        if end - start > 1:
+            cluster = eigenvectors[start:end]
+            a_x = [sum(v * w for v, w in zip(vector, load_x)) for vector in cluster]
+            a_y = [sum(v * w for v, w in zip(vector, load_y)) for vector in cluster]
+            weights = [
+                [a_x[i] * a_x[j] + 1e-3 * a_y[i] * a_y[j] for j in range(len(cluster))]
+                for i in range(len(cluster))
+            ]
+            _, rotations = symmetric_eigen(weights)
+            rotated = [
+                [sum(rotation[k] * cluster[k][dof] for k in range(len(cluster))) for dof in range(size)]
+                for rotation in rotations
+            ]
+            rotated.sort(key=lambda vector: -abs(sum(v * w for v, w in zip(vector, load_x))))
+            eigenvectors[start:end] = rotated
+        start = end
+    total_mass = {
+        key: sum(r_i * value for r_i, value in zip(vector, _matvec(mass_matrix, vector)))
+        for key, vector in influence.items()
+    }
+
+    largest = max((abs(value) for value in eigenvalues), default=1.0) or 1.0
+    modes = []
+    for eigenvalue, vector in sorted(zip(eigenvalues, eigenvectors), key=lambda item: item[0]):
+        if eigenvalue <= largest * 1e-12:
+            raise ValueError("El modelo tiene un modo sin rigidez; revisa la estabilidad en X, Y y torsión.")
+        shape = _matvec(lower_inv_t, vector)  # normalizado a φᵀMφ = 1
+        m_shape = _matvec(mass_matrix, shape)
+        generalized_mass = sum(a * b for a, b in zip(shape, m_shape))
+        factors = {}
+        effective = {}
+        for key, vector_r in influence.items():
+            l_n = sum(a * b for a, b in zip(m_shape, vector_r))
+            factors[key] = l_n / generalized_mass
+            effective[key] = (l_n * l_n / generalized_mass) / total_mass[key] if total_mass[key] > 0 else 0.0
+        # Normaliza la forma para que el mayor desplazamiento traslacional sea 1.
+        translations = [abs(value) for dof, value in enumerate(shape) if dof % 3 != 2]
+        reference = max(translations, default=0.0)
+        if reference <= 1e-15:
+            reference = max(abs(value) for value in shape)
+        peak = max(range(size), key=lambda dof: abs(shape[dof]) if (dof % 3 != 2 or reference == 0) else 0.0)
+        sign = 1.0 if shape[peak] >= 0 else -1.0
+        normalized = [sign * value / reference for value in shape]
+        omega = sqrt(eigenvalue)
+        dominant = max(effective, key=effective.get)
+        modes.append(
+            {
+                "omega": omega,
+                "frequency": omega / (2.0 * pi),
+                "period": 2.0 * pi / omega,
+                "shape": normalized,
+                "participation": {key: sign * reference * value for key, value in factors.items()},
+                "mass_ratio": effective,
+                "dominant": dominant,
+            }
+        )
+
+    cumulative = {"X": 0.0, "Y": 0.0, "RZ": 0.0}
+    for mode in modes:
+        for key in cumulative:
+            cumulative[key] += mode["mass_ratio"][key]
+        mode["cumulative"] = dict(cumulative)
+
+    return {
+        "mass_matrix": mass_matrix,
+        "modes": modes,
+        "total_mass": total_mass,
     }
