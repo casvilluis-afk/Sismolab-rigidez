@@ -2,13 +2,14 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#10151c" />
     <meta name="description" content="Rigidez lateral, metrado de cargas, análisis pseudotridimensional y modal de edificios según la E.030, con el desarrollo de cada cálculo." />
     <title>SismoLab · Rigidez y análisis estructural</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Barlow+Semi+Condensed:wght@500;600;700&family=STIX+Two+Text:ital,wght@0,400;0,500;1,400;1,500&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=STIX+Two+Text:ital,wght@0,400;0,500;1,400;1,500&display=swap" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
@@ -19,41 +20,49 @@
         <div class="header-shell">
           <a class="brand" href="#inicio" aria-label="SismoLab, ir al inicio">
             <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-              <path d="M4 11h24M4 21h24M11 4v24M21 4v24" />
+              <path class="brand-grid" d="M4 11h24M4 21h24M11 4v24M21 4v24" />
               <rect x="8.5" y="8.5" width="5" height="5" /><rect x="18.5" y="8.5" width="5" height="5" /><rect x="8.5" y="18.5" width="5" height="5" /><rect x="18.5" y="18.5" width="5" height="5" />
             </svg>
             <strong>SismoLab</strong>
+            <span class="brand-version">E.030 · 2026</span>
           </a>
-
-          <nav class="stage-switcher" aria-label="Etapas de trabajo">
-            <button id="stage-rigidity-button" class="stage-tab is-active" type="button" data-action="stage" data-value="rigidity" aria-current="step">
-              <span class="bubble" aria-hidden="true">1</span><span class="stage-tab__text"><strong>Rigidez</strong><small>Columnas, vigas y losas</small></span>
-            </button>
-            <span class="stage-connector" aria-hidden="true"></span>
-            <button id="stage-loads-button" class="stage-tab" type="button" data-action="stage" data-value="loads">
-              <span class="bubble" aria-hidden="true">2</span><span class="stage-tab__text"><strong>Metrado</strong><small>Peso y fuerza sísmica</small></span>
-            </button>
-            <span class="stage-connector" aria-hidden="true"></span>
-            <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
-              <span class="bubble" aria-hidden="true">3</span><span class="stage-tab__text"><strong>Análisis</strong><small>Respuesta y modos</small></span>
-            </button>
-            <span class="stage-connector" aria-hidden="true"></span>
-            <button id="stage-spectra-button" class="stage-tab" type="button" data-action="stage" data-value="spectra">
-              <span class="bubble" aria-hidden="true">4</span><span class="stage-tab__text"><strong>Espectros</strong><small>Registro y E.030</small></span>
-            </button>
-          </nav>
-
+          <div class="topbar-crumbs" aria-label="Modelo activo">
+            <span class="crumb-label">Modelo</span>
+            <span id="topbar-model" class="crumb-value">Modelo libre</span>
+            <span class="crumb-sep" aria-hidden="true">/</span>
+            <span id="topbar-stage" class="crumb-value crumb-value--muted">Rigidez</span>
+          </div>
           <div class="header-actions">
             <div class="unit-toggle" role="group" aria-label="Sistema de unidades; el cambio convierte los datos ingresados">
               <button id="units-si" class="is-active" type="button" data-action="units" data-value="SI" aria-pressed="true" title="kN, MPa y mm">SI</button>
               <button id="units-mks" type="button" data-action="units" data-value="MKS" aria-pressed="false" title="tonf, kgf/cm² y cm">MKS</button>
             </div>
-            <button class="button button-ghost reset-button" type="button" data-action="reset">Reiniciar</button>
+            <button class="button button-ghost reset-button" type="button" data-action="reset" title="Volver al modelo inicial">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10a6 6 0 1 0 1.8-4.3M4 3.5v3.6h3.6" /></svg><span>Reiniciar</span>
+            </button>
+            <button class="button button-primary run-button" type="button" data-action="apply-loads" title="Pasa fuerzas y masas del metrado al análisis y lo resuelve">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.5v11l9-5.5z" /></svg><span>Analizar</span>
+            </button>
           </div>
         </div>
       </header>
 
-      <section id="inicio" class="intro page-shell" aria-labelledby="intro-title">
+      <nav class="stage-switcher app-rail" aria-label="Etapas de trabajo">
+        <button id="stage-rigidity-button" class="stage-tab is-active" type="button" data-action="stage" data-value="rigidity" aria-current="step" title="Rigidez: columnas, vigas y losas">
+          <span class="bubble" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V6M12 20V6M20 20V6M2 6h20M2 13h20" /><path d="M2 20h20" class="icon-ground" /></svg></span><span class="stage-tab__text"><strong>Rigidez</strong><small>1 · Columnas, vigas y losas</small></span>
+        </button>
+        <button id="stage-loads-button" class="stage-tab" type="button" data-action="stage" data-value="loads" title="Metrado: peso y fuerza sísmica">
+          <span class="bubble" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M6 12h12M8 17h8" /><path d="M12 3v2M12 19v2" /></svg></span><span class="stage-tab__text"><strong>Metrado</strong><small>2 · Peso y fuerza sísmica</small></span>
+        </button>
+        <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis" title="Análisis: respuesta y modos">
+          <span class="bubble" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 21V3M6 21h12" /><path d="M6 15c4 0 4-2.5 7-3s4-3.5 5-9" /></svg></span><span class="stage-tab__text"><strong>Análisis</strong><small>3 · Respuesta y modos</small></span>
+        </button>
+        <button id="stage-spectra-button" class="stage-tab" type="button" data-action="stage" data-value="spectra" title="Espectros: registro y E.030">
+          <span class="bubble" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 20h18M3 20V4" /><path d="M3 17l2-6 2 3 2-8 2 7 2-3 2 4 2-2 2 3" /></svg></span><span class="stage-tab__text"><strong>Espectros</strong><small>4 · Registro y E.030</small></span>
+        </button>
+      </nav>
+
+      <section id="inicio" class="intro" aria-labelledby="intro-title">
         <p id="intro-eyebrow" class="eyebrow" hidden></p>
         <div class="intro-grid">
           <div>
@@ -64,8 +73,8 @@
         </div>
       </section>
 
-      <div id="rigidity-stage">
-        <div class="page-shell workspace-grid">
+      <div id="rigidity-stage" class="stage-view">
+        <div class="workspace-grid">
           <section class="input-panel" aria-label="Datos del modelo">
             <section id="dd-panel" class="panel dd-panel" aria-labelledby="dd-heading">
               <div class="panel__head"><h2 id="dd-heading">Proyecto</h2><span>Ingeniería Resistente · DD</span></div>
@@ -246,27 +255,26 @@
               <div class="panel__head"><h2>Cálculo paso a paso</h2><span id="height-conversion" class="height-conversion">h = 3,00 m</span></div>
               <div id="steps-list" class="steps-list"></div>
             </div>
+            <section class="stage-foot" aria-label="Fundamento y siguiente etapa">
+              <details class="theory-section">
+                <summary>Fundamento y alcance de la rigidez lateral</summary>
+                <div class="theory-grid">
+                  <article><h3>Modelo de corte</h3><p>Se impone un desplazamiento lateral unitario y la losa no se deforma a flexión: cada columna actúa como un resorte lateral k = cEI/h³.</p></article>
+                  <article><h3>Sección bruta</h3><p>I = a⁴/12 para la sección cuadrada e I = πD⁴/64 para la circular maciza. Concreto: E<sub>c</sub> = 4 700√f′c (SI) o 15 000√f′c (MKS); acero: E ≈ 200 000 MPa.</p></article>
+                  <article><h3>Alcance</h3><p>Idealización elástica inicial. No considera la flexibilidad real de las vigas ni efectos de segundo orden. Uso educativo: requiere la revisión de un ingeniero estructural.</p></article>
+                </div>
+              </details>
+              <div class="next-step">
+                <p>Con la rigidez de cada eje, el metrado calcula el peso y la fuerza sísmica de cada piso.</p>
+                <button class="button button-primary transition-button" type="button" data-action="stage" data-value="loads">Continuar al metrado</button>
+              </div>
+            </section>
           </section>
         </div>
-
-        <section class="page-shell stage-foot" aria-label="Fundamento y siguiente etapa">
-          <details class="theory-section">
-            <summary>Fundamento y alcance de la rigidez lateral</summary>
-            <div class="theory-grid">
-              <article><h3>Modelo de corte</h3><p>Se impone un desplazamiento lateral unitario y la losa no se deforma a flexión: cada columna actúa como un resorte lateral k = cEI/h³.</p></article>
-              <article><h3>Sección bruta</h3><p>I = a⁴/12 para la sección cuadrada e I = πD⁴/64 para la circular maciza. Concreto: E<sub>c</sub> = 4 700√f′c (SI) o 15 000√f′c (MKS); acero: E ≈ 200 000 MPa.</p></article>
-              <article><h3>Alcance</h3><p>Idealización elástica inicial. No considera la flexibilidad real de las vigas ni efectos de segundo orden. Uso educativo: requiere la revisión de un ingeniero estructural.</p></article>
-            </div>
-          </details>
-          <div class="next-step">
-            <p>Con la rigidez de cada eje, el metrado calcula el peso y la fuerza sísmica de cada piso.</p>
-            <button class="button button-primary transition-button" type="button" data-action="stage" data-value="loads">Continuar al metrado</button>
-          </div>
-        </section>
       </div>
 
-      <section id="loads-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
-        <div class="page-shell analysis-workspace">
+      <section id="loads-stage" class="analysis-stage stage-view" hidden aria-labelledby="intro-title">
+        <div class="analysis-workspace">
           <section class="analysis-input-panel" aria-label="Datos del metrado">
             <section class="panel" aria-labelledby="loads-data-heading">
               <div class="panel__head"><h2 id="loads-data-heading">Sitio y uso</h2><span>E.030 · E.020</span></div>
@@ -420,19 +428,18 @@
               <p>Las fuerzas y masas de cada nivel pasan al análisis del edificio completo.</p>
               <button id="apply-loads-to-analysis" type="button" class="button button-primary transition-button" data-action="apply-loads">Usar estas fuerzas en el análisis</button>
             </div>
+            <section class="stage-foot">
+              <details class="theory-section analysis-scope">
+                <summary>Alcance del metrado</summary>
+                <p>Metrado por grupos: incorpora las columnas definidas en Rigidez, las vigas y losas modeladas, acabados, tabiquería y carga viva. Las coordenadas de cada grupo representan su centroide. No reemplaza el metrado completo del proyecto ni el análisis dinámico cuando la norma lo exige.</p>
+              </details>
+            </section>
           </section>
         </div>
-
-        <section class="page-shell stage-foot">
-          <details class="theory-section analysis-scope">
-            <summary>Alcance del metrado</summary>
-            <p>Metrado por grupos: incorpora las columnas definidas en Rigidez, las vigas y losas modeladas, acabados, tabiquería y carga viva. Las coordenadas de cada grupo representan su centroide. No reemplaza el metrado completo del proyecto ni el análisis dinámico cuando la norma lo exige.</p>
-          </details>
-        </section>
       </section>
 
-      <section id="analysis-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
-        <div class="page-shell analysis-workspace">
+      <section id="analysis-stage" class="analysis-stage stage-view" hidden aria-labelledby="intro-title">
+        <div class="analysis-workspace">
           <section class="analysis-input-panel" aria-label="Datos del análisis">
             <section class="panel" aria-labelledby="analysis-data-heading">
               <div class="panel__head"><h2 id="analysis-data-heading">Modelo global</h2><span id="analysis-level-count" class="factor-output">2 niveles</span></div>
@@ -445,7 +452,7 @@
                   </div>
                   <div class="field-block example-field">
                     <span class="output-label">Ejemplo</span>
-                    <button class="button example-button" type="button" data-action="load-analysis-example">Cargar edificio de 2 niveles</button>
+                    <button class="button example-button" type="button" data-action="load-analysis-example">Ejemplo de 2 niveles</button>
                   </div>
                 </div>
                 <p class="field-help">La cantidad de niveles se cambia en Rigidez.</p>
@@ -576,26 +583,25 @@
               <button type="button" class="details-toggle panel__head" data-action="toggle-details" data-target="#analysis-steps-card" aria-expanded="false" aria-controls="analysis-steps"><span class="details-toggle__title">Memoria de cálculo del análisis</span><span>mostrar</span></button>
               <div id="analysis-steps" class="steps-scroll"></div>
             </div>
+            <section class="stage-foot">
+              <details class="theory-section analysis-method">
+                <summary>Ruta matricial y alcance del análisis</summary>
+                <ol class="analysis-method-grid">
+                  <li><h3>Matriz de cada eje</h3><p>Las rigideces de piso forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></li>
+                  <li><h3>Posición y orientación</h3><p>[G] relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo r.</p></li>
+                  <li><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G; resolver K<sub>P3D</sub>U = F da desplazamientos y giros. F = K<sup>−1</sup> es la matriz de flexibilidad.</p></li>
+                  <li><h3>Análisis modal</h3><p>Con m y J = m(a²+b²)/12 por diafragma se resuelve Kφ = ω²Mφ: periodos, formas de modo y masa participativa.</p></li>
+                </ol>
+                <p class="analysis-scope">Modelo lineal educativo con diafragmas rígidos. Si defines K<sub>x</sub> o K<sub>y</sub> por piso en Metrado, el aporte de los ejes se escala en ese nivel. El análisis modal espectral combina modos con CQC o con la regla 0,25Σ|r| + 0,75√Σr² de la E.030. No incluye interacción suelo–estructura, efectos de segundo orden ni la combinación 100 % + 30 % de direcciones.</p>
+              </details>
+            </section>
           </section>
         </div>
-
-        <section class="page-shell stage-foot">
-          <details class="theory-section analysis-method">
-            <summary>Ruta matricial y alcance del análisis</summary>
-            <ol class="analysis-method-grid">
-              <li><h3>Matriz de cada eje</h3><p>Las rigideces de piso forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></li>
-              <li><h3>Posición y orientación</h3><p>[G] relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo r.</p></li>
-              <li><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G; resolver K<sub>P3D</sub>U = F da desplazamientos y giros. F = K<sup>−1</sup> es la matriz de flexibilidad.</p></li>
-              <li><h3>Análisis modal</h3><p>Con m y J = m(a²+b²)/12 por diafragma se resuelve Kφ = ω²Mφ: periodos, formas de modo y masa participativa.</p></li>
-            </ol>
-            <p class="analysis-scope">Modelo lineal educativo con diafragmas rígidos. Si defines K<sub>x</sub> o K<sub>y</sub> por piso en Metrado, el aporte de los ejes se escala en ese nivel. El análisis modal espectral combina modos con CQC o con la regla 0,25Σ|r| + 0,75√Σr² de la E.030. No incluye interacción suelo–estructura, efectos de segundo orden ni la combinación 100 % + 30 % de direcciones.</p>
-          </details>
-        </section>
       </section>
 
 
-      <section id="spectra-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
-        <div class="page-shell analysis-workspace">
+      <section id="spectra-stage" class="analysis-stage stage-view" hidden aria-labelledby="intro-title">
+        <div class="analysis-workspace">
           <section class="analysis-input-panel" aria-label="Datos del registro">
             <section class="panel" aria-labelledby="spec-record-heading">
               <div class="panel__head"><h2 id="spec-record-heading">Registro sísmico</h2><span>aceleración del suelo</span></div>
@@ -685,17 +691,22 @@
               <div id="spec-legend" class="iso-legend spec-legend"></div>
             </div>
             <div id="spec-table" class="panel analysis-table-card"></div>
+            <section class="stage-foot">
+              <details class="theory-section analysis-scope">
+                <summary>Cómo se calculan los espectros</summary>
+                <p>Para cada periodo T se resuelve un oscilador de un grado de libertad con amortiguamiento ξ sometido al registro. El espectro guarda el máximo desplazamiento relativo Sd, la máxima velocidad relativa Sv y la máxima aceleración absoluta Sa; las pseudo-ordenadas son PSv = ωSd y PSa = ω²Sd. El método analítico supone que la aceleración varía linealmente entre muestras y usa la solución exacta en cada tramo (Nigam y Jennings). Newmark-β resuelve paso a paso con γ = ½ y β = ¼ (aceleración promedio, incondicionalmente estable) o β = ⅙ (aceleración lineal). El espectro de la E.030 es Sa = ZUCS/R·g con C de la Tabla N° 6.</p>
+              </details>
+            </section>
           </section>
         </div>
-        <section class="page-shell stage-foot">
-          <details class="theory-section analysis-scope">
-            <summary>Cómo se calculan los espectros</summary>
-            <p>Para cada periodo T se resuelve un oscilador de un grado de libertad con amortiguamiento ξ sometido al registro. El espectro guarda el máximo desplazamiento relativo Sd, la máxima velocidad relativa Sv y la máxima aceleración absoluta Sa; las pseudo-ordenadas son PSv = ωSd y PSa = ω²Sd. El método analítico supone que la aceleración varía linealmente entre muestras y usa la solución exacta en cada tramo (Nigam y Jennings). Newmark-β resuelve paso a paso con γ = ½ y β = ¼ (aceleración promedio, incondicionalmente estable) o β = ⅙ (aceleración lineal). El espectro de la E.030 es Sa = ZUCS/R·g con C de la Tabla N° 6.</p>
-          </details>
-        </section>
       </section>
 
-      <footer class="site-footer"><div class="page-shell"><span>SismoLab · Análisis sísmico educativo según la E.030</span><span>Requiere la revisión de un ingeniero estructural</span></div></footer>
+      <footer id="status-bar" class="status-bar" aria-label="Estado del modelo">
+        <span class="status-item status-state"><i class="status-dot" aria-hidden="true"></i><span id="status-state">Cargando motor de cálculo…</span></span>
+        <span id="status-model" class="status-item">—</span>
+        <span id="status-metrics" class="status-metrics"></span>
+        <span class="status-item status-legal">Uso educativo · requiere revisión de un ingeniero estructural</span>
+      </footer>
     </main>
     <script>
       // Lee el archivo del registro en el navegador y lo pasa al cuadro de texto.

@@ -2537,7 +2537,7 @@ def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
 
     parts = [
         '<svg viewBox="0 0 520 300" role="img" aria-label="Ejes resistentes y centro de masa en planta">',
-        '<rect x="48" y="38" width="424" height="224" rx="6" fill="white" stroke="#cbd7d5"/>',
+        '<rect class="viewport-frame" x="48" y="38" width="424" height="224" rx="6"/>',
     ]
     for step in range(1, 5):
         grid_x = 48 + 424 * step / 5
@@ -2555,7 +2555,7 @@ def _analysis_plan_svg(center_rigidity: dict[str, float] | None = None) -> str:
         parts.append(
             f'<line class="analysis-axis-line{extra_class}" x1="{px - dx:.1f}" y1="{py - dy:.1f}" x2="{px + dx:.1f}" y2="{py + dy:.1f}"/>'
         )
-        parts.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="#122c33"/>')
+        parts.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" class="analysis-axis-node"/>')
         parts.append(
             f'<text class="analysis-axis-label" x="{label_x:.1f}" y="{label_y:.1f}">{escape(str(group.axis))} · β={format_number(group.beta, 0)}°</text>'
         )
@@ -2954,7 +2954,7 @@ def _deformed_plan_svg(result: dict, level_index: int) -> str:
 
     parts = [
         '<svg viewBox="0 0 520 300" role="img" aria-label="Planta original y planta deformada">',
-        '<rect x="44" y="32" width="432" height="228" rx="6" fill="white" stroke="#e4ebe9"/>',
+        '<rect class="viewport-frame" x="44" y="32" width="432" height="228" rx="6"/>',
         f'<polygon class="deform-plan-original" points="{original_pts}"/>',
         f'<polygon class="deform-plan-shifted" points="{shifted_pts}"/>',
         f'<line class="deform-cm-line" x1="{cm0[0]:.1f}" y1="{cm0[1]:.1f}" x2="{cm1[0]:.1f}" y2="{cm1[1]:.1f}" marker-end="url(#deformArrow)"/>',
@@ -3403,7 +3403,7 @@ def render_modal_results(result: dict, modal: dict | None, masses: list | None, 
       <div class="modal-layout">
         <div class="modal-shape">
           {_mode_shape_svg(selected_mode, levels)}
-          <p class="modal-legend"><span><i style="background:var(--teal)"></i>φ<sub>x</sub></span><span><i style="background:var(--amber)"></i>φ<sub>y</sub></span></p>
+          <p class="modal-legend"><span><i style="background:var(--dir-x)"></i>φ<sub>x</sub></span><span><i style="background:var(--dir-y)"></i>φ<sub>y</sub></span></p>
         </div>
         <div>
           <p class="matrix-caption">Modo {analysis_modal_mode + 1}: T = {format_number(selected_mode['period'], 4)} s · f = {format_number(selected_mode['frequency'], 3)} Hz · ω = {format_number(selected_mode['omega'], 3)} rad/s. Forma normalizada con la mayor traslación = 1.</p>
@@ -4014,6 +4014,7 @@ def _floor_takeoff_html(
 
 
 def render_loads_results() -> None:
+    global status_base_shear
     global loads_ia, loads_ip
     warning = by_id("loads-warning")
     column_rows_by_level = [column_takeoff_rows(level.height, index) for index, level in enumerate(load_levels)]
@@ -4047,6 +4048,7 @@ def render_loads_results() -> None:
         by_id("loads-summary").innerHTML = (
             '<div class="analysis-placeholder">Completa los datos del metrado para calcular el peso sísmico.</div>'
         )
+        status_base_shear = None
         by_id("loads-weight-chart").innerHTML = ""
         by_id("loads-force-chart").innerHTML = ""
         by_id("loads-table").innerHTML = ""
@@ -4058,6 +4060,7 @@ def render_loads_results() -> None:
 
     warning.hidden = True
     warning.textContent = ""
+    status_base_shear = result.base_shear
     render_irregularity_results(assessment)
 
     period_source = "estimado T = hn/CT" if loads_period_mode == "auto" else "manual"
@@ -4617,6 +4620,41 @@ def render_spectral_analysis(result: dict, modal: dict | None, masses: list | No
 
 
 
+
+# ---------------------------------------------------------------------------
+# Barra de estado y migas de la barra superior
+# ---------------------------------------------------------------------------
+
+STAGE_NAMES = {"rigidity": "Rigidez", "loads": "Metrado", "analysis": "Análisis", "spectra": "Espectros"}
+status_base_shear: float | None = None
+
+
+def render_status_bar() -> None:
+    model = f"DD · Grupo {dd_params.group}" if dd_active and dd_params is not None else "Modelo libre"
+    levels = len(load_levels)
+    by_id("topbar-model").textContent = model
+    by_id("topbar-stage").textContent = STAGE_NAMES.get(current_stage, "")
+    by_id("status-model").textContent = f"{model} · {levels} nivel{'es' if levels != 1 else ''} · {units}"
+    kx = str(by_id("total-stiffness-x").textContent or "—")
+    ky = str(by_id("total-stiffness-y").textContent or "—")
+    unit = str(by_id("stiffness-unit-x").textContent or "")
+    items = [f'<span class="status-item"><span class="is-x">k<sub>x</sub></span> <b>{escape(kx)}</b></span>',
+             f'<span class="status-item"><span class="is-y">k<sub>y</sub></span> <b>{escape(ky)}</b> {escape(unit)}</span>']
+    if status_base_shear is not None:
+        items.append(f'<span class="status-item">V <b>{format_number(status_base_shear, 1)}</b> kN</span>')
+    if modal_periods_cache:
+        items.append(f'<span class="status-item">T<sub>1</sub> <b>{format_number(modal_periods_cache[0][1], 3)}</b> s</span>')
+    by_id("status-metrics").innerHTML = "".join(items)
+    warnings = [
+        by_id(element_id)
+        for element_id in ("calculation-warning", "loads-warning", "analysis-warning", "spec-warning")
+    ]
+    has_error = any(not element.hidden and str(element.textContent).strip() for element in warnings if element is not None)
+    bar = by_id("status-bar")
+    bar.classList.toggle("is-error", has_error)
+    by_id("status-state").textContent = "Revisar datos" if has_error else "Listo"
+
+
 STAGE_INTRO = {
     "rigidity": {
         "title": "SismoLab · Rigidez lateral",
@@ -4993,8 +5031,7 @@ def reset() -> None:
     set_stage("rigidity")
 
 
-@when("click", "#calculator")
-def handle_click(event):
+def _handle_click(event):
     action_element = event.target.closest("[data-action]")
     if not hasattr(action_element, "getAttribute"):
         return
@@ -5095,8 +5132,7 @@ def handle_click(event):
         use_modal_period(parse_number(action_element.getAttribute("data-value"), 0.0))
 
 
-@when("input", "#calculator")
-def handle_input(event):
+def _handle_input(event):
     global story_height, analysis_alpha, analysis_cm_x, analysis_cm_y
     global analysis_ecc_x, analysis_ecc_y
     global plan_angle_a, plan_angle_b
@@ -5347,8 +5383,7 @@ def handle_input(event):
     render_analysis_results()
 
 
-@when("change", "#calculator")
-def handle_change(event):
+def _handle_change(event):
     global loads_use_preset, rigidity_plan_level
     global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
     global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
@@ -5534,6 +5569,24 @@ def handle_change(event):
     render_analysis_results()
 
 
+@when("click", "#calculator")
+def handle_click(event):
+    _handle_click(event)
+    render_status_bar()
+
+
+@when("input", "#calculator")
+def handle_input(event):
+    _handle_input(event)
+    render_status_bar()
+
+
+@when("change", "#calculator")
+def handle_change(event):
+    _handle_change(event)
+    render_status_bar()
+
+
 def initialize() -> None:
     render_dd_panel()
     render_model_geometry_inputs()
@@ -5551,6 +5604,7 @@ def initialize() -> None:
     render_analysis_results()
     render_spectra()
     by_id("calculator").setAttribute("aria-busy", "false")
+    render_status_bar()
 
 
 initialize()
