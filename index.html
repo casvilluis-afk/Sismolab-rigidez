@@ -3,9 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Herramienta educativa para rigidez lateral, metrado de cargas y análisis pseudotridimensional de edificios." />
+    <meta name="description" content="Rigidez lateral, metrado de cargas, análisis pseudotridimensional y modal de edificios según la E.030, con el desarrollo de cada cálculo." />
     <title>SismoLab · Rigidez y análisis estructural</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Barlow+Semi+Condensed:wght@500;600;700&family=STIX+Two+Text:ital,wght@0,400;0,500;1,400;1,500&display=swap" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
@@ -13,572 +16,509 @@
   <body>
     <main id="calculator" aria-busy="true">
       <header class="site-header">
-        <div class="page-shell header-shell">
-          <a class="brand" href="#inicio" aria-label="Ir al inicio">
-            <span class="brand-mark" aria-hidden="true">▥</span>
-            <span><strong>SismoLab</strong><small>Herramientas estructurales</small></span>
+        <div class="header-shell">
+          <a class="brand" href="#inicio" aria-label="SismoLab, ir al inicio">
+            <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+              <path d="M4 11h24M4 21h24M11 4v24M21 4v24" />
+              <rect x="8.5" y="8.5" width="5" height="5" /><rect x="18.5" y="8.5" width="5" height="5" /><rect x="8.5" y="18.5" width="5" height="5" /><rect x="18.5" y="18.5" width="5" height="5" />
+            </svg>
+            <strong>SismoLab</strong>
           </a>
+
+          <nav class="stage-switcher" aria-label="Etapas de trabajo">
+            <button id="stage-rigidity-button" class="stage-tab is-active" type="button" data-action="stage" data-value="rigidity" aria-current="step">
+              <span class="bubble" aria-hidden="true">1</span><span class="stage-tab__text"><strong>Rigidez</strong><small>Columnas, vigas y losas</small></span>
+            </button>
+            <span class="stage-connector" aria-hidden="true"></span>
+            <button id="stage-loads-button" class="stage-tab" type="button" data-action="stage" data-value="loads">
+              <span class="bubble" aria-hidden="true">2</span><span class="stage-tab__text"><strong>Metrado</strong><small>Peso y fuerza sísmica</small></span>
+            </button>
+            <span class="stage-connector" aria-hidden="true"></span>
+            <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
+              <span class="bubble" aria-hidden="true">3</span><span class="stage-tab__text"><strong>Análisis</strong><small>Respuesta y modos</small></span>
+            </button>
+          </nav>
+
           <div class="header-actions">
-            <button class="button button-ghost" type="button" data-action="reset">↻ Reiniciar</button>
+            <div class="unit-toggle" role="group" aria-label="Sistema de unidades; el cambio convierte los datos ingresados">
+              <button id="units-si" class="is-active" type="button" data-action="units" data-value="SI" aria-pressed="true" title="kN, MPa y mm">SI</button>
+              <button id="units-mks" type="button" data-action="units" data-value="MKS" aria-pressed="false" title="tonf, kgf/cm² y cm">MKS</button>
+            </div>
+            <button class="button button-ghost reset-button" type="button" data-action="reset">Reiniciar</button>
           </div>
         </div>
       </header>
 
-      <section id="inicio" class="intro">
-        <div class="page-shell intro-grid">
+      <section id="inicio" class="intro page-shell" aria-labelledby="intro-title">
+        <p id="intro-eyebrow" class="eyebrow" hidden></p>
+        <div class="intro-grid">
           <div>
-            <p id="intro-eyebrow" class="eyebrow">RIGIDEZ LATERAL · MODELO DE CORTE</p>
             <h1 id="intro-title">Rigidez lateral del entrepiso</h1>
-            <p id="intro-copy" class="intro-copy">Calcula el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.</p>
+            <p id="intro-copy" class="intro-copy">Calcula el aporte elástico de columnas cuadradas y circulares, con el procedimiento para comprobarlo a mano.</p>
           </div>
-          <div class="model-note">
-            <span aria-hidden="true">i</span>
-            <p><strong id="model-note-title">Hipótesis principal</strong><span id="model-note-copy">Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.</span></p>
-          </div>
+          <p class="model-note"><strong id="model-note-title">Hipótesis</strong> <span id="model-note-copy">Losa infinitamente rígida en su plano; los giros dependen de las conexiones de cada columna.</span></p>
         </div>
       </section>
-
-      <nav class="page-shell stage-switcher" aria-label="Etapas de trabajo">
-        <button id="stage-rigidity-button" class="stage-tab is-active" type="button" data-action="stage" data-value="rigidity" aria-current="step">
-          <span>1</span><div><strong>Rigidez</strong><small>Propiedades de los ejes</small></div>
-        </button>
-        <span class="stage-connector" aria-hidden="true">→</span>
-        <button id="stage-loads-button" class="stage-tab" type="button" data-action="stage" data-value="loads">
-          <span>2</span><div><strong>Metrado</strong><small>Cargas y peso sísmico</small></div>
-        </button>
-        <span class="stage-connector" aria-hidden="true">→</span>
-        <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
-          <span>3</span><div><strong>Análisis</strong><small>Respuesta del edificio</small></div>
-        </button>
-      </nav>
 
       <div id="rigidity-stage">
-
-      <section class="page-shell unit-strip" aria-label="Sistema de unidades">
-        <div>
-          <span class="unit-strip__label">Sistema de unidades</span>
-          <span class="unit-strip__hint">El cambio convierte todos los datos ingresados.</span>
-        </div>
-        <div class="unit-toggle">
-          <button id="units-si" class="button is-active" type="button" data-action="units" data-value="SI" aria-pressed="true">SI <span>kN · MPa · mm</span></button>
-          <button id="units-mks" class="button" type="button" data-action="units" data-value="MKS" aria-pressed="false">MKS <span>tonf · kgf/cm² · cm</span></button>
-        </div>
-      </section>
-
-      <div class="page-shell workspace-grid">
-        <section class="input-panel" aria-labelledby="datos-heading">
-          <div class="section-heading">
-            <span class="step-number">01</span>
-            <div><h2 id="datos-heading">Edificio, columnas y ejes</h2><p>Define una sola vez los niveles y dibuja la planta estructural con sus grupos de columnas.</p></div>
-          </div>
-
-          <div class="story-card building-setup-card">
-            <div class="story-icon" aria-hidden="true">▦</div>
-            <div class="field-block">
-              <label for="building-levels">Niveles totales</label>
-              <select id="building-levels" data-field="building-levels">
-                <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option><option value="9">9 niveles</option><option value="10">10 niveles</option><option value="11">11 niveles</option><option value="12">12 niveles</option>
-              </select>
-              <small>Incluye el último nivel de techo o azotea.</small>
-            </div>
-            <div class="field-block">
-              <label for="story-height">Altura típica de entrepiso</label>
-              <div class="input-with-unit">
-                <input id="story-height" name="story-height" type="number" min="1" max="12" step="0.05" value="3" data-field="story-height" />
-                <span>m</span>
+        <div class="page-shell workspace-grid">
+          <section class="input-panel" aria-label="Datos del modelo">
+            <section class="panel" aria-labelledby="datos-heading">
+              <div class="panel__head"><h2 id="datos-heading">Edificio</h2><span>se usa en las tres etapas</span></div>
+              <div class="panel__body building-setup">
+                <div class="field-block">
+                  <label for="building-levels">Niveles</label>
+                  <select id="building-levels" data-field="building-levels">
+                    <option value="1">1 nivel</option><option value="2" selected>2 niveles</option><option value="3">3 niveles</option><option value="4">4 niveles</option><option value="5">5 niveles</option><option value="6">6 niveles</option><option value="7">7 niveles</option><option value="8">8 niveles</option><option value="9">9 niveles</option><option value="10">10 niveles</option><option value="11">11 niveles</option><option value="12">12 niveles</option>
+                  </select>
+                  <small>El último es el techo o azotea.</small>
+                </div>
+                <div class="field-block">
+                  <label for="story-height">Altura de entrepiso</label>
+                  <div class="input-with-unit">
+                    <input id="story-height" name="story-height" type="number" min="1" max="12" step="0.05" value="3" data-field="story-height" />
+                    <span>m</span>
+                  </div>
+                  <small>Se copia a todos los niveles.</small>
+                </div>
               </div>
-              <small>Se copia inicialmente a todos los niveles.</small>
-            </div>
-            <p class="building-setup-note">Estos niveles se reutilizan automáticamente en Metrado y Análisis.</p>
-          </div>
+            </section>
 
-          <section class="model-geometry-card" aria-labelledby="model-geometry-heading">
-            <div class="model-geometry-card__head">
-              <span aria-hidden="true">⌗</span>
-              <div><h3 id="model-geometry-heading">Geometría de la planta</h3><p>Define las separaciones entre los ejes de la retícula.</p></div>
-            </div>
-            <div class="model-geometry-section">
-              <strong>Longitudes entre ejes</strong>
-              <small>L₁ y L₂ se usan en X; L₃ y L₄ se usan en Y. Los tramos exteriores usan L₁/L₃ y los interiores L₂/L₄.</small>
-              <div class="length-fields">
-                <div class="field-block"><label for="plan-length-1">L₁</label><div class="input-with-unit"><input id="plan-length-1" type="number" min="0.5" max="30" step="0.1" value="4" data-field="plan-length" data-index="0" /><span>m</span></div></div>
-                <div class="field-block"><label for="plan-length-2">L₂</label><div class="input-with-unit"><input id="plan-length-2" type="number" min="0.5" max="30" step="0.1" value="5" data-field="plan-length" data-index="1" /><span>m</span></div></div>
-                <div class="field-block"><label for="plan-length-3">L₃</label><div class="input-with-unit"><input id="plan-length-3" type="number" min="0.5" max="30" step="0.1" value="4" data-field="plan-length" data-index="2" /><span>m</span></div></div>
-                <div class="field-block"><label for="plan-length-4">L₄</label><div class="input-with-unit"><input id="plan-length-4" type="number" min="0.5" max="30" step="0.1" value="5" data-field="plan-length" data-index="3" /><span>m</span></div></div>
+            <section class="panel model-geometry-card" aria-labelledby="model-geometry-heading">
+              <div class="panel__head"><h2 id="model-geometry-heading">Retícula en planta</h2><span>ejes 1–5 · A–D</span></div>
+              <div class="panel__body">
+                <p class="panel-note">L₁ y L₂ son las luces en X (exteriores e interiores); L₃ y L₄, en Y.</p>
+                <div class="length-fields">
+                  <div class="field-block"><label for="plan-length-1">L₁</label><div class="input-with-unit"><input id="plan-length-1" type="number" min="0.5" max="30" step="0.1" value="4" data-field="plan-length" data-index="0" /><span>m</span></div></div>
+                  <div class="field-block"><label for="plan-length-2">L₂</label><div class="input-with-unit"><input id="plan-length-2" type="number" min="0.5" max="30" step="0.1" value="5" data-field="plan-length" data-index="1" /><span>m</span></div></div>
+                  <div class="field-block"><label for="plan-length-3">L₃</label><div class="input-with-unit"><input id="plan-length-3" type="number" min="0.5" max="30" step="0.1" value="4" data-field="plan-length" data-index="2" /><span>m</span></div></div>
+                  <div class="field-block"><label for="plan-length-4">L₄</label><div class="input-with-unit"><input id="plan-length-4" type="number" min="0.5" max="30" step="0.1" value="5" data-field="plan-length" data-index="3" /><span>m</span></div></div>
+                </div>
+                <div class="plan-angle-fields">
+                  <div class="field-block"><label for="plan-angle-a">Ángulo A</label><div class="input-with-unit"><input id="plan-angle-a" type="number" min="1" max="179" step="0.1" placeholder="opcional" data-field="plan-angle-a" /><span>°</span></div></div>
+                  <div class="field-block"><label for="plan-angle-b">Ángulo B</label><div class="input-with-unit"><input id="plan-angle-b" type="number" min="-45" max="45" step="0.1" placeholder="opcional" data-field="plan-angle-b" /><span>°</span></div></div>
+                </div>
+                <small class="plan-angle-help">Completa los dos ángulos para añadir un ala inclinada a la planta.</small>
               </div>
-              <div class="plan-angle-fields">
-                <div class="field-block"><label for="plan-angle-a">Ángulo A (opcional)</label><div class="input-with-unit"><input id="plan-angle-a" type="number" min="1" max="179" step="0.1" placeholder="Vacío" data-field="plan-angle-a" /><span>°</span></div></div>
-                <div class="field-block"><label for="plan-angle-b">Ángulo B (opcional)</label><div class="input-with-unit"><input id="plan-angle-b" type="number" min="-45" max="45" step="0.1" placeholder="Vacío" data-field="plan-angle-b" /><span>°</span></div></div>
+            </section>
+
+            <details class="panel beam-editor column-editor" open>
+              <summary class="panel__head"><h2 id="column-editor-heading">Columnas</h2><span>un grupo por pórtico</span></summary>
+              <details class="howto">
+                <summary>Cómo dibujar la planta</summary>
+                <ol>
+                  <li>Añade un grupo por pórtico: los ejes 1–5 trabajan en Y y las líneas A–D en X.</li>
+                  <li>Escribe el eje del grupo y su cantidad de columnas.</li>
+                  <li>Revisa X₀ e Y₀: ubican el centro del grupo en planta.</li>
+                  <li>Añade las vigas y los paños de losa; se crean en el siguiente tramo libre.</li>
+                </ol>
+              </details>
+              <div id="group-list" class="group-list editor-scroll-list">
+                <div class="loading-card"><span class="spinner"></span><strong>Cargando la calculadora…</strong></div>
               </div>
-              <small class="plan-angle-help">El ala naranja aparece únicamente cuando completas los dos ángulos.</small>
-            </div>
+              <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>Añadir grupo de columnas <span id="group-count">1/20</span></button>
+            </details>
+
+            <details class="panel beam-editor" open>
+              <summary class="panel__head"><h2 id="beam-editor-heading">Vigas</h2><span>entre nudos de la retícula</span></summary>
+              <div id="beam-list" class="beam-list editor-scroll-list">
+                <p class="beam-empty">Cargando el editor de vigas…</p>
+              </div>
+              <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>Añadir viga <span id="beam-count">0/31</span></button>
+            </details>
+
+            <details class="panel beam-editor slab-editor" open>
+              <summary class="panel__head"><h2 id="slab-editor-heading">Losas</h2><span>por paños</span></summary>
+              <div id="slab-list" class="beam-list slab-list editor-scroll-list">
+                <p class="beam-empty">Cargando el editor de losas…</p>
+              </div>
+              <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>Añadir paño de losa <span id="slab-count">0/12</span></button>
+            </details>
           </section>
 
-          <div class="axis-builder-guide" role="note" aria-label="Cómo dibujar la planta estructural">
-            <strong>Dibuja tu estructura en cinco pasos</strong>
-            <ol>
-              <li><span>1</span>Añade un grupo de columnas.</li>
-              <li><span>2</span>Escribe el eje: 1, 2, A, B…</li>
-              <li><span>3</span>Ubícalo con X₀ e Y₀ y revisa la planta.</li>
-              <li><span>4</span>Añade vigas indicando sus nodos inicial y final.</li>
-              <li><span>5</span>Añade losas seleccionando dos esquinas opuestas del paño.</li>
-            </ol>
-            <small>La distribución definida aquí se usa inicialmente en todos los niveles.</small>
-          </div>
+          <section class="result-panel" aria-labelledby="resultado-heading">
+            <div class="result-card readout">
+              <div class="readout__head">
+                <h2 id="resultado-heading">Rigidez por dirección</h2>
+                <p class="formula-bar"><span class="math">k = Σ n<sub>i</sub> c<sub>i</sub> E<sub>i</sub>I<sub>i</sub> / h³</span> por dirección</p>
+              </div>
+              <div class="total-grid">
+                <output class="total-result total-result--x" aria-live="polite">
+                  <span class="math">k<sub>x</sub></span><strong id="total-stiffness-x">—</strong><em id="stiffness-unit-x">kN/m</em>
+                </output>
+                <output class="total-result total-result--y" aria-live="polite">
+                  <span class="math">k<sub>y</sub></span><strong id="total-stiffness-y">—</strong><em id="stiffness-unit-y">kN/m</em>
+                </output>
+              </div>
+              <div id="calculation-warning" class="calculation-warning" hidden></div>
+            </div>
 
-          <details class="beam-editor column-editor" aria-labelledby="column-editor-heading" open>
-            <summary class="beam-editor__head column-editor__head">
-              <div><span>COLUMNAS DEL MODELO</span><h3 id="column-editor-heading">Edita grupos de columnas</h3></div>
-              <p>El panel se puede plegar y la lista tendrá desplazamiento interno al crecer.</p>
-            </summary>
-            <div id="group-list" class="group-list editor-scroll-list">
-              <div class="loading-card"><span class="spinner"></span><strong>Preparando la calculadora…</strong></div>
-            </div>
-            <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>＋ Añadir grupo de columnas <span id="group-count">1/20</span></button>
-          </details>
-
-          <details class="beam-editor" aria-labelledby="beam-editor-heading" open>
-            <summary class="beam-editor__head">
-              <div><span>VIGAS DEL MODELO</span><h3 id="beam-editor-heading">Dibuja vigas entre nodos</h3></div>
-              <p>Cada viga tiene su propio ancho y peralte. Pliega este panel cuando termines.</p>
-            </summary>
-            <div id="beam-list" class="beam-list editor-scroll-list">
-              <p class="beam-empty">Preparando el editor de vigas…</p>
-            </div>
-            <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>＋ Añadir viga <span id="beam-count">0/31</span></button>
-          </details>
-
-          <details class="beam-editor slab-editor" aria-labelledby="slab-editor-heading" open>
-            <summary class="beam-editor__head slab-editor__head">
-              <div><span>LOSAS DEL MODELO</span><h3 id="slab-editor-heading">Dibuja losas por paños</h3></div>
-              <p>Define las esquinas, el espesor y los niveles. La lista no alarga toda la página.</p>
-            </summary>
-            <div id="slab-list" class="beam-list slab-list editor-scroll-list">
-              <p class="beam-empty">Preparando el editor de losas…</p>
-            </div>
-            <button id="add-slab" type="button" class="button add-beam add-slab" data-action="add-slab" disabled>＋ Añadir paño de losa <span id="slab-count">0/12</span></button>
-          </details>
-        </section>
-
-        <section class="result-panel" aria-labelledby="resultado-heading">
-          <div class="result-card">
-            <div class="result-card__top">
-              <div><span class="result-kicker">RESULTADO DEL ENTREPISO</span><h2 id="resultado-heading">Rigidez lateral por dirección</h2></div>
-              <span class="live-pill">Cálculo en vivo</span>
-            </div>
-            <div class="total-grid">
-              <output class="total-result" aria-live="polite">
-                <span>k<sub>x</sub></span><strong id="total-stiffness-x">—</strong><em id="stiffness-unit-x">kN/m</em>
-              </output>
-              <output class="total-result" aria-live="polite">
-                <span>k<sub>y</sub></span><strong id="total-stiffness-y">—</strong><em id="stiffness-unit-y">kN/m</em>
-              </output>
-            </div>
-            <div id="calculation-warning" class="calculation-warning" hidden></div>
-            <div class="formula-bar"><b>Σ</b><span>k<sub>x</sub> ó k<sub>y</sub> = Σ n<sub>i</sub> · c<sub>i</sub> · E<sub>i</sub>I<sub>i</sub> / h³ (solo columnas asignadas a esa dirección)</span></div>
-          </div>
-
-          <div class="frame-diagram">
-            <div id="frame-diagram-3d" class="frame-diagram-3d building-diagram"></div>
-            <p id="diagram-caption">Retícula estructural en vista isométrica.</p>
-            <div class="iso-legend">
-              <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--concrete"></i>Concreto</span>
-              <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--steel"></i>Acero</span>
-              <span class="iso-legend-item"><i class="iso-legend-slab"></i>Losa modelada</span>
-            </div>
-            <div class="diagram-divider"></div>
-            <div class="plan-viewer-toolbar">
-              <div><span>PLANTA ACTIVA</span><h3 id="plan-view-level-title" class="diagram-subheading">Nivel 1</h3></div>
-              <div class="field-block">
-                <label for="rigidity-plan-level">Ver nivel</label>
-                <select id="rigidity-plan-level" data-field="rigidity-plan-level"><option value="0">Nivel 1</option></select>
+            <div class="frame-diagram panel">
+              <div class="panel__head plan-viewer-toolbar">
+                <h2 id="plan-view-level-title" class="diagram-subheading">Planta del nivel 1</h2>
+                <div class="viz-control">
+                  <label for="rigidity-plan-level">Nivel</label>
+                  <select id="rigidity-plan-level" data-field="rigidity-plan-level"><option value="0">Nivel 1</option></select>
+                </div>
+              </div>
+              <div id="frame-diagram-plan" class="frame-diagram-3d frame-diagram-plan"></div>
+              <p id="plan-caption" class="viz-caption">Distribución por ejes estructurales.</p>
+              <div class="iso-legend">
+                <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Columna</span>
+                <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--grid"></i>Eje</span>
+                <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--beam"></i>Viga</span>
+                <span class="iso-legend-item"><i class="plan-legend-slab"></i>Losa</span>
+                <span id="plan-wing-legend" class="iso-legend-item" hidden><i class="plan-legend-line plan-legend-line--wing"></i>Ala inclinada</span>
               </div>
             </div>
-            <div id="frame-diagram-plan" class="frame-diagram-3d frame-diagram-plan"></div>
-            <p id="plan-caption">Distribución real por ejes estructurales.</p>
-            <div class="iso-legend">
-              <span class="iso-legend-item"><i class="iso-legend-shape iso-legend-shape--square"></i>Columna</span>
-              <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--grid"></i>Retícula</span>
-              <span class="iso-legend-item"><i class="plan-legend-line plan-legend-line--beam"></i>Viga modelada</span>
-              <span class="iso-legend-item"><i class="plan-legend-slab"></i>Losa modelada</span>
-              <span id="plan-wing-legend" class="iso-legend-item" hidden><i class="plan-legend-line plan-legend-line--wing"></i>Ala angular</span>
-            </div>
-          </div>
 
-          <div class="contribution-card">
-            <div class="subheading"><h3>Aporte por grupo</h3><span id="contribution-count">—</span></div>
-            <div id="contribution-list" class="contribution-list"></div>
-          </div>
-
-          <div class="calculation-card">
-            <div class="section-heading section-heading--small">
-              <span class="step-number">02</span><div><h2>Cálculo paso a paso</h2><p>Valores listos para contrastar manualmente.</p></div>
+            <div class="frame-diagram panel">
+              <div class="panel__head"><h2>Vista 3D del edificio</h2><span>escala fija hasta 12 niveles</span></div>
+              <div id="frame-diagram-3d" class="frame-diagram-3d building-diagram"></div>
+              <p id="diagram-caption" class="viz-caption">Vista isométrica de la retícula.</p>
+              <div class="iso-legend">
+                <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--concrete"></i>Concreto</span>
+                <span class="iso-legend-item"><i class="iso-legend-dot iso-legend-dot--steel"></i>Acero</span>
+                <span class="iso-legend-item"><i class="iso-legend-slab"></i>Losa modelada</span>
+              </div>
             </div>
-            <p id="height-conversion" class="height-conversion">h = 3,00 m</p>
-            <div id="steps-list" class="steps-list"></div>
+
+            <div class="contribution-card panel">
+              <div class="panel__head"><h2>Aporte por grupo</h2><span id="contribution-count">—</span></div>
+              <div id="contribution-list" class="contribution-list"></div>
+            </div>
+
+            <div class="calculation-card panel">
+              <div class="panel__head"><h2>Cálculo paso a paso</h2><span id="height-conversion" class="height-conversion">h = 3,00 m</span></div>
+              <div id="steps-list" class="steps-list"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="page-shell stage-foot" aria-label="Fundamento y siguiente etapa">
+          <details class="theory-section">
+            <summary>Fundamento y alcance de la rigidez lateral</summary>
+            <div class="theory-grid">
+              <article><h3>Modelo de corte</h3><p>Se impone un desplazamiento lateral unitario y la losa no se deforma a flexión: cada columna actúa como un resorte lateral k = cEI/h³.</p></article>
+              <article><h3>Sección bruta</h3><p>I = a⁴/12 para la sección cuadrada e I = πD⁴/64 para la circular maciza. Concreto: E<sub>c</sub> = 4 700√f′c (SI) o 15 000√f′c (MKS); acero: E ≈ 200 000 MPa.</p></article>
+              <article><h3>Alcance</h3><p>Idealización elástica inicial. No considera la flexibilidad real de las vigas ni efectos de segundo orden. Uso educativo: requiere la revisión de un ingeniero estructural.</p></article>
+            </div>
+          </details>
+          <div class="next-step">
+            <p>Con la rigidez de cada eje, el metrado calcula el peso y la fuerza sísmica de cada piso.</p>
+            <button class="button button-primary transition-button" type="button" data-action="stage" data-value="loads">Continuar al metrado</button>
           </div>
         </section>
       </div>
 
-      <section class="page-shell theory-section">
-        <div class="theory-title"><span aria-hidden="true">▤</span><div><p class="eyebrow">FUNDAMENTO Y ALCANCE</p><h2>Qué representa este resultado</h2></div></div>
-        <div class="theory-grid">
-          <article><span>01</span><h3>Modelo de corte</h3><p>Se impone un desplazamiento lateral unitario y la viga o losa no se deforma a flexión. Cada columna funciona como un resorte lateral.</p></article>
-          <article><span>02</span><h3>Sección bruta</h3><p>Se usa I = a⁴/12 para la sección cuadrada e I = πD⁴/64 para la circular maciza.</p></article>
-          <article><span>03</span><h3>Alcance actual</h3><p>Es una idealización elástica inicial. El modelo global deberá incorporar vigas reales, torsión, segundo orden y las exigencias de la E.030.</p></article>
-        </div>
-        <div class="reference-row">
-          <p>Concreto armado: E<sub>c</sub> = 4 700√f′c (SI) / 15 000√f′c (MKS). Acero: E constante ≈ 200 000 MPa.</p>
-          <span>Uso educativo · Requiere revisión de un ingeniero estructural</span>
-        </div>
-      </section>
+      <section id="loads-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
+        <div class="page-shell analysis-workspace">
+          <section class="analysis-input-panel" aria-label="Datos del metrado">
+            <section class="panel" aria-labelledby="loads-data-heading">
+              <div class="panel__head"><h2 id="loads-data-heading">Sitio y uso</h2><span>E.030 · E.020</span></div>
+              <div class="panel__body">
+                <div class="global-use-card">
+                  <div class="field-block">
+                    <label for="loads-use-global">Uso de la edificación</label>
+                    <select id="loads-use-global" data-field="loads-use-global">
+                      <option value="vivienda" selected>Vivienda · 2,0 kN/m²</option>
+                      <option value="oficina">Oficina · 2,5 kN/m²</option>
+                      <option value="aula">Aula / centro de enseñanza · 2,5 kN/m²</option>
+                      <option value="corredor_publico">Corredores y escaleras públicas · 4,0 kN/m²</option>
+                      <option value="tienda">Tiendas / centros comerciales · 5,0 kN/m²</option>
+                      <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m²</option>
+                      <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m²</option>
+                      <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m²</option>
+                      <option value="otro">Otro · editable por nivel</option>
+                    </select>
+                    <small>Se aplica a todos los pisos; la azotea conserva su carga. Luego puedes cambiar un nivel.</small>
+                  </div>
+                </div>
+                <div class="analysis-form-grid">
+                  <div class="field-block">
+                    <label for="loads-zone">Zona sísmica</label>
+                    <select id="loads-zone" data-field="loads-zone">
+                      <option value="1">Zona 1 · Z = 0,10</option>
+                      <option value="2">Zona 2 · Z = 0,25</option>
+                      <option value="3" selected>Zona 3 · Z = 0,35</option>
+                      <option value="4">Zona 4 · Z = 0,45</option>
+                    </select>
+                  </div>
+                  <div class="field-block">
+                    <label for="loads-soil">Perfil de suelo</label>
+                    <select id="loads-soil" data-field="loads-soil">
+                      <option value="S0">S0 · Roca</option>
+                      <option value="S1">S1 · Muy rígido</option>
+                      <option value="S2" selected>S2 · Rígido</option>
+                      <option value="S3">S3 · Intermedio</option>
+                      <option value="S4">S4 · Blando</option>
+                    </select>
+                  </div>
+                  <div class="field-block">
+                    <label for="loads-category">Categoría</label>
+                    <select id="loads-category" data-field="loads-category">
+                      <option value="A1">A₁ · Salud esencial · U = 1,5</option>
+                      <option value="A2">A₂ · Esencial · U = 1,5</option>
+                      <option value="B">B · Importante · U = 1,3</option>
+                      <option value="C" selected>C · Común · U = 1,0</option>
+                    </select>
+                  </div>
+                  <div class="field-block">
+                    <label for="loads-system">Sistema estructural</label>
+                    <select id="loads-system" data-field="loads-system">
+                      <option value="porticos">Pórticos · R₀ = 8</option>
+                      <option value="dual">Dual · R₀ = 7</option>
+                      <option value="muros" selected>Muros estructurales · R₀ = 6</option>
+                      <option value="albanileria">Albañilería · R₀ = 3</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="field-help">Sin V<sub>s30</sub>, S2 y S3 usan los valores conservadores de la E.030:2026. La Tabla 9 se comprueba sola; A₁ en zonas 3 y 4 requiere aislamiento y queda fuera de este modelo.</p>
+              </div>
+            </section>
 
-      <section class="page-shell analysis-transition" aria-labelledby="transition-heading">
-        <div class="transition-status"><span>✓</span> ETAPA 1 · RIGIDEZ</div>
-        <div class="transition-copy">
-          <p class="eyebrow">SIGUIENTE PASO</p>
-          <h2 id="transition-heading">De cada columna a la respuesta completa del edificio</h2>
-          <p>La rigidez que acabas de calcular se convierte ahora en la matriz de cada eje resistente. El análisis combina esas matrices con la posición en planta y las fuerzas de cada nivel.</p>
-        </div>
-        <ol class="transition-flow" aria-label="Transición entre rigidez y análisis">
-          <li><span>1</span><div><strong>Rigidez conocida</strong><small>k = cEI/h³ por grupo</small></div></li>
-          <li><span>2</span><div><strong>Ubicación del eje</strong><small>x, y y orientación β</small></div></li>
-          <li><span>3</span><div><strong>Respuesta global</strong><small>desplazamiento, giro y cortante</small></div></li>
-        </ol>
-        <button class="button transition-button" type="button" data-action="stage" data-value="loads">Continuar al metrado de cargas <span aria-hidden="true">→</span></button>
-      </section>
-      </div>
+            <section class="panel" aria-labelledby="loads-factors-heading">
+              <div class="panel__head"><h2 id="loads-factors-heading">Factores y periodo</h2></div>
+              <div class="panel__body analysis-form-grid">
+                <div class="field-block">
+                  <span class="output-label">Irregularidad en altura I<sub>a</sub></span>
+                  <output id="loads-ia" class="factor-output">1,00</output>
+                </div>
+                <div class="field-block">
+                  <span class="output-label">Irregularidad en planta I<sub>p</sub></span>
+                  <output id="loads-ip" class="factor-output">1,00</output>
+                </div>
+                <div class="field-block">
+                  <label for="loads-period-mode">Periodo T</label>
+                  <select id="loads-period-mode" data-field="loads-period-mode">
+                    <option value="auto" selected>Estimar T = hn / CT</option>
+                    <option value="manual">Ingresar T</option>
+                  </select>
+                </div>
+                <div class="field-block">
+                  <label for="loads-period-manual">T manual</label>
+                  <div class="input-with-unit"><input id="loads-period-manual" type="number" step="0.01" min="0.05" value="0.30" data-field="loads-period-manual" disabled /><span>s</span></div>
+                </div>
+              </div>
+            </section>
 
-      <section id="loads-stage" class="page-shell analysis-stage" hidden aria-labelledby="loads-heading">
-        <div class="analysis-stage__head">
-          <button class="button button-ghost" type="button" data-action="stage" data-value="rigidity">← Volver a Rigidez</button>
-          <div>
-            <p class="eyebrow">ETAPA 2 · METRADO DE CARGAS</p>
-            <h2 id="loads-heading">Metrado de cargas y centro de masa por nivel</h2>
-            <p>Desglosa columnas, vigas, losa y cargas superficiales para calcular el peso, el centro de masa y la fuerza estática de cada piso.</p>
-          </div>
-        </div>
+            <section class="panel" aria-labelledby="loads-levels-heading">
+              <div class="panel__head"><h2 id="loads-levels-heading">Cargas por nivel</h2><span id="loads-level-count">2 niveles</span></div>
+              <div class="panel__body">
+                <div id="loads-level-list" class="analysis-floor-list"></div>
+                <button type="button" class="button button-ghost inherited-levels-button" data-action="stage" data-value="rigidity">Cambiar la cantidad de niveles en Rigidez</button>
+              </div>
+            </section>
 
-        <div class="analysis-bridge" role="note">
-          <span aria-hidden="true">1 → 2</span>
-          <div><strong>¿Qué cambió?</strong><p>Los niveles, columnas y ejes ya vienen de Rigidez. Aquí completas el uso y las cargas de cada piso para obtener el peso y la fuerza sísmica que alimentarán la Etapa 3.</p></div>
-        </div>
-
-        <div class="analysis-workspace">
-          <section class="analysis-input-panel" aria-labelledby="loads-data-heading">
-            <div class="section-heading">
-              <span class="step-number">02</span>
-              <div><h2 id="loads-data-heading">Parámetros de sitio (E.030)</h2><p>Zona sísmica, suelo, categoría y sistema estructural.</p></div>
-            </div>
-
-            <div class="global-use-card">
-              <div>
-                <span class="global-use-card__step">USO GENERAL</span>
-                <strong>Aplicar la sobrecarga de uso a todos los pisos</strong>
-                <small>La selección queda guardada y se aplica a todos los pisos comunes. La azotea conserva su carga específica; luego puedes modificar un nivel individual.</small>
+            <section class="panel irregularity-panel" aria-labelledby="irregularity-heading">
+              <div class="panel__head"><h2 id="irregularity-heading">Irregularidades</h2><span>E.030:2026, Tablas 11 y 12</span></div>
+              <div class="panel__body">
+                <p class="field-help">Rigidez, masa, geometría y torsión se revisan solas. El piso débil se evalúa cuando ingresas V<sub>n,x</sub> y V<sub>n,y</sub> por nivel. Marca aquí lo que requiere inspección:</p>
+                <div class="irregularity-manual-grid">
+                  <fieldset>
+                    <legend>En altura</legend>
+                    <label class="check-card"><input id="loads-discontinuity-vertical" type="checkbox" data-field="loads-discontinuity-vertical" /><span><strong>Discontinuidad vertical</strong><small>Un elemento desalineado resiste más del 10 % del cortante.</small></span><b>0,80</b></label>
+                    <label class="check-card"><input id="loads-extreme-discontinuity-vertical" type="checkbox" data-field="loads-extreme-discontinuity-vertical" /><span><strong>Discontinuidad extrema</strong><small>Los elementos discontinuos superan el 25 % del cortante.</small></span><b>0,60</b></label>
+                  </fieldset>
+                  <fieldset>
+                    <legend>En planta</legend>
+                    <label class="check-card"><input id="loads-reentrant-corners" type="checkbox" data-field="loads-reentrant-corners" /><span><strong>Esquinas entrantes</strong><small>Mayores que el 20 % en ambas direcciones.</small></span><b>0,90</b></label>
+                    <label class="check-card"><input id="loads-diaphragm-discontinuity" type="checkbox" data-field="loads-diaphragm-discontinuity" /><span><strong>Diafragma discontinuo</strong><small>Aberturas sobre el 50 % o sección neta bajo el 50 %.</small></span><b>0,85</b></label>
+                    <label class="check-card"><input id="loads-nonparallel-systems" type="checkbox" data-field="loads-nonparallel-systems" /><span><strong>Sistemas no paralelos</strong><small>Con las excepciones de 30° y 10 % del cortante.</small></span><b>0,90</b></label>
+                  </fieldset>
+                </div>
+                <div id="loads-irregularity-results"></div>
               </div>
-              <div class="field-block">
-                <label for="loads-use-global">Uso de la edificación (E.020)</label>
-                <select id="loads-use-global" data-field="loads-use-global">
-                  <option value="vivienda" selected>Vivienda · 2,0 kN/m²</option>
-                  <option value="oficina">Oficina · 2,5 kN/m²</option>
-                  <option value="aula">Aula / centro de enseñanza · 3,0 kN/m²</option>
-                  <option value="corredor_publico">Corredores y escaleras públicas · 4,0 kN/m²</option>
-                  <option value="tienda">Tiendas / centros comerciales · 5,0 kN/m²</option>
-                  <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m²</option>
-                  <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m²</option>
-                  <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m²</option>
-                  <option value="otro">Otro · editable por nivel</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="analysis-form-grid analysis-form-grid--four">
-              <div class="field-block">
-                <label for="loads-zone">Zona sísmica</label>
-                <select id="loads-zone" data-field="loads-zone">
-                  <option value="1">Zona 1 (Z=0,10)</option>
-                  <option value="2">Zona 2 (Z=0,25)</option>
-                  <option value="3" selected>Zona 3 (Z=0,35)</option>
-                  <option value="4">Zona 4 (Z=0,45)</option>
-                </select>
-              </div>
-              <div class="field-block">
-                <label for="loads-soil">Perfil de suelo</label>
-                <select id="loads-soil" data-field="loads-soil">
-                  <option value="S0">S0 · Roca</option>
-                  <option value="S1">S1 · Suelos muy rígidos</option>
-                  <option value="S2" selected>S2 · Suelos rígidos</option>
-                  <option value="S3">S3 · Suelos intermedios</option>
-                  <option value="S4">S4 · Suelos blandos</option>
-                </select>
-                <small>Cinco perfiles S0–S4. Para S2 y S3, sin Vs30 se usan los valores conservadores indicados por la E.030:2026.</small>
-              </div>
-              <div class="field-block">
-                <label for="loads-category">Categoría</label>
-                <select id="loads-category" data-field="loads-category">
-                  <option value="A1">A₁ · Salud esencial (U=1,5 sin aislamiento)</option>
-                  <option value="A2">A₂ · Esencial (U=1,5)</option>
-                  <option value="B">B · Importante (U=1,3)</option>
-                  <option value="C" selected>C · Común (U=1,0)</option>
-                </select>
-              </div>
-              <div class="field-block">
-                <label for="loads-system">Sistema estructural</label>
-                <select id="loads-system" data-field="loads-system">
-                  <option value="porticos">Pórticos (R₀=8)</option>
-                  <option value="dual">Dual (R₀=7)</option>
-                  <option value="muros" selected>Muros estructurales (R₀=6)</option>
-                  <option value="albanileria">Albañilería (R₀=3)</option>
-                </select>
-              </div>
-              <p class="field-help">La Tabla 9 se comprueba automáticamente. A₁ en zonas 3 y 4 requiere aislamiento sísmico y queda fuera de este modelo convencional.</p>
-            </div>
-
-            <div class="analysis-form-grid analysis-form-grid--four">
-              <div class="field-block">
-                <span class="output-label">Irregularidad en altura I<sub>a</sub></span>
-                <output id="loads-ia" class="factor-output">1,00</output>
-              </div>
-              <div class="field-block">
-                <span class="output-label">Irregularidad en planta I<sub>p</sub></span>
-                <output id="loads-ip" class="factor-output">1,00</output>
-              </div>
-              <div class="field-block">
-                <label for="loads-period-mode">Periodo fundamental T</label>
-                <select id="loads-period-mode" data-field="loads-period-mode">
-                  <option value="auto" selected>Estimar T = hn/CT</option>
-                  <option value="manual">Ingresar T manualmente</option>
-                </select>
-              </div>
-              <div class="field-block">
-                <label for="loads-period-manual">T manual</label>
-                <div class="input-with-unit"><input id="loads-period-manual" type="number" step="0.01" min="0.05" value="0.30" data-field="loads-period-manual" disabled /><span>s</span></div>
-              </div>
-            </div>
-
-            <div class="analysis-subsection">
-              <div class="subheading"><h3>Niveles y cargas por nivel</h3><span id="loads-level-count">2 niveles heredados de Rigidez</span></div>
-              <div id="loads-level-list" class="analysis-floor-list"></div>
-              <button type="button" class="button button-ghost inherited-levels-button" data-action="stage" data-value="rigidity">Cambiar cantidad de niveles en Rigidez</button>
-            </div>
-
-            <section class="irregularity-panel" aria-labelledby="irregularity-heading">
-              <div class="section-heading section-heading--compact">
-                <span class="step-number">I</span>
-                <div><h2 id="irregularity-heading">Irregularidades E.030:2026</h2><p>I<sub>a</sub> e I<sub>p</sub> se obtienen con el menor factor aplicable.</p></div>
-              </div>
-              <div class="irregularity-manual-grid">
-                <fieldset>
-                  <legend>Inspección en altura</legend>
-                  <label class="check-card"><input id="loads-discontinuity-vertical" type="checkbox" data-field="loads-discontinuity-vertical" /><span><strong>Discontinuidad vertical</strong><small>Desalineamiento de un elemento que resiste más de 10% del cortante.</small></span><b>0,80</b></label>
-                  <label class="check-card"><input id="loads-extreme-discontinuity-vertical" type="checkbox" data-field="loads-extreme-discontinuity-vertical" /><span><strong>Discontinuidad extrema</strong><small>Los elementos discontinuos superan 25% del cortante total.</small></span><b>0,60</b></label>
-                </fieldset>
-                <fieldset>
-                  <legend>Inspección en planta</legend>
-                  <label class="check-card"><input id="loads-reentrant-corners" type="checkbox" data-field="loads-reentrant-corners" /><span><strong>Esquinas entrantes</strong><small>Entrantes mayores que 20% en ambas direcciones.</small></span><b>0,90</b></label>
-                  <label class="check-card"><input id="loads-diaphragm-discontinuity" type="checkbox" data-field="loads-diaphragm-discontinuity" /><span><strong>Diafragma discontinuo</strong><small>Aberturas mayores que 50% o sección neta menor que 50%.</small></span><b>0,85</b></label>
-                  <label class="check-card"><input id="loads-nonparallel-systems" type="checkbox" data-field="loads-nonparallel-systems" /><span><strong>Sistemas no paralelos</strong><small>Con las excepciones normativas de 30° y 10% del cortante.</small></span><b>0,90</b></label>
-                </fieldset>
-              </div>
-              <p class="field-help">La rigidez, masa, geometría y torsión se revisan automáticamente. El piso débil sólo se evalúa cuando ingresas Vn,x y Vn,y por nivel.</p>
-              <div id="loads-irregularity-results"></div>
             </section>
           </section>
 
           <section class="analysis-result-panel" aria-labelledby="loads-result-heading">
-            <div class="analysis-result-card">
-              <div class="result-card__top">
-                <div><span class="result-kicker">METRADO EN VIVO</span><h2 id="loads-result-heading">Peso sísmico y cortante basal</h2></div>
-                <span class="live-pill">Cálculo en vivo</span>
+            <div class="analysis-result-card readout">
+              <div class="readout__head">
+                <h2 id="loads-result-heading">Peso sísmico y cortante basal</h2>
+                <p class="formula-bar"><span class="math">V = (Z U C S / R) · ΣP</span> con P = CM + %CV</p>
               </div>
               <div id="loads-warning" class="analysis-warning" hidden></div>
               <div id="loads-summary" class="analysis-summary"></div>
-              <div class="formula-bar"><b>Σ</b><span>P = CM superficial + columnas + vigas + %CV · CV · V = (Z·U·C·S/R)·ΣP</span></div>
             </div>
 
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Peso sísmico por nivel</h3><span>P<sub>i</sub> en kN</span></div>
-              <div id="loads-weight-chart" class="analysis-chart"></div>
+            <div class="panel chart-pair">
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Peso por nivel</h2><span class="math">P<sub>i</sub> (kN)</span></div>
+                <div id="loads-weight-chart" class="analysis-chart"></div>
+              </div>
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Fuerza sísmica por nivel</h2><span class="math">F<sub>i</sub> (kN)</span></div>
+                <div id="loads-force-chart" class="analysis-chart"></div>
+              </div>
             </div>
 
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Fuerza sísmica por nivel</h3><span>F<sub>i</sub> en kN</span></div>
-              <div id="loads-force-chart" class="analysis-chart"></div>
-            </div>
+            <div id="loads-table" class="analysis-table-card panel"></div>
 
-            <div id="loads-table" class="analysis-table-card"></div>
-
-            <div id="loads-steps-card" class="steps-card">
-              <button type="button" class="details-toggle" data-action="toggle-details" data-target="#loads-steps-card" aria-expanded="false" aria-controls="loads-steps">Desarrollo paso a paso del metrado <span>ver desarrollo</span></button>
+            <div id="loads-steps-card" class="steps-card panel">
+              <button type="button" class="details-toggle panel__head" data-action="toggle-details" data-target="#loads-steps-card" aria-expanded="false" aria-controls="loads-steps"><span class="details-toggle__title">Memoria de cálculo del metrado</span><span>mostrar</span></button>
               <div id="loads-steps" class="steps-scroll"></div>
             </div>
 
-            <button id="apply-loads-to-analysis" type="button" class="button transition-button" data-action="apply-loads">Usar estas fuerzas en el Análisis <span aria-hidden="true">→</span></button>
+            <div class="next-step">
+              <p>Las fuerzas y masas de cada nivel pasan al análisis del edificio completo.</p>
+              <button id="apply-loads-to-analysis" type="button" class="button button-primary transition-button" data-action="apply-loads">Usar estas fuerzas en el análisis</button>
+            </div>
           </section>
         </div>
 
-        <div class="analysis-scope">
-          <strong>Alcance de esta etapa</strong>
-          <p>Metrado por grupos: incorpora las columnas definidas en Rigidez, un grupo típico de vigas por nivel, losa, acabados, tabiquería y carga viva. Las coordenadas de grupos repetidos representan su centroide. No reemplaza el metrado individual completo del proyecto ni el análisis dinámico cuando la norma lo exige.</p>
-        </div>
+        <section class="page-shell stage-foot">
+          <details class="theory-section analysis-scope">
+            <summary>Alcance del metrado</summary>
+            <p>Metrado por grupos: incorpora las columnas definidas en Rigidez, las vigas y losas modeladas, acabados, tabiquería y carga viva. Las coordenadas de cada grupo representan su centroide. No reemplaza el metrado completo del proyecto ni el análisis dinámico cuando la norma lo exige.</p>
+          </details>
+        </section>
       </section>
 
-      <section id="analysis-stage" class="page-shell analysis-stage" hidden aria-labelledby="analysis-heading">
-        <div class="analysis-stage__head">
-          <button class="button button-ghost" type="button" data-action="stage" data-value="loads">← Volver a Metrado</button>
-          <div>
-            <p class="eyebrow">ETAPA 3 · ANÁLISIS PSEUDOTRIDIMENSIONAL</p>
-            <h2 id="analysis-heading">Respuesta del edificio con diafragmas rígidos</h2>
-            <p>Cada nivel tiene tres movimientos: desplazamiento en X, desplazamiento en Y y giro alrededor del eje vertical.</p>
-          </div>
-        </div>
-
-        <div class="analysis-bridge" role="note">
-          <span aria-hidden="true">2 → 3</span>
-          <div><strong>¿Qué cambió?</strong><p>La cantidad de niveles y los ejes ya están definidos desde Rigidez; Metrado aporta sus fuerzas. Aquí se calcula cómo se desplaza y gira el edificio completo.</p></div>
-        </div>
-
-        <div class="analysis-workspace">
-          <section class="analysis-input-panel" aria-labelledby="analysis-data-heading">
-            <div class="section-heading">
-              <span class="step-number">03</span>
-              <div><h2 id="analysis-data-heading">Modelo global</h2><p>Define niveles, fuerzas y geometría de los ejes.</p></div>
-            </div>
-
-            <button class="button example-button" type="button" data-action="load-analysis-example">▦ Cargar ejemplo estable de 2 niveles</button>
-
-            <div class="analysis-form-grid">
-              <div class="field-block">
-                <span class="output-label">Niveles definidos en Rigidez</span>
-                <output id="analysis-level-count" class="factor-output">2 niveles</output>
-                <small>Para cambiar la cantidad, vuelve a la Etapa 1.</small>
+      <section id="analysis-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
+        <div class="page-shell analysis-workspace">
+          <section class="analysis-input-panel" aria-label="Datos del análisis">
+            <section class="panel" aria-labelledby="analysis-data-heading">
+              <div class="panel__head"><h2 id="analysis-data-heading">Modelo global</h2><span id="analysis-level-count" class="factor-output">2 niveles</span></div>
+              <div class="panel__body">
+                <div class="analysis-form-grid">
+                  <div class="field-block">
+                    <label for="analysis-alpha">Dirección del sismo α</label>
+                    <div class="input-with-unit"><input id="analysis-alpha" type="number" step="1" value="0" data-field="analysis-alpha" /><span>°</span></div>
+                    <small>0° es X; 90° es Y.</small>
+                  </div>
+                  <div class="field-block example-field">
+                    <span class="output-label">Ejemplo</span>
+                    <button class="button example-button" type="button" data-action="load-analysis-example">Cargar edificio de 2 niveles</button>
+                  </div>
+                </div>
+                <p class="field-help">La cantidad de niveles se cambia en Rigidez.</p>
               </div>
-              <div class="field-block">
-                <label for="analysis-alpha">Dirección sísmica α</label>
-                <div class="input-with-unit"><input id="analysis-alpha" type="number" step="1" value="0" data-field="analysis-alpha" /><span>°</span></div>
+            </section>
+
+            <section class="panel" aria-labelledby="analysis-floors-heading">
+              <div class="panel__head"><h2 id="analysis-floors-heading">Fuerza y altura por nivel</h2><span>F en kN · h en m</span></div>
+              <div class="panel__body"><div id="analysis-floor-list" class="analysis-floor-list"></div></div>
+            </section>
+
+            <section class="panel" aria-labelledby="analysis-cm-heading">
+              <div class="panel__head"><h2 id="analysis-cm-heading">Centro de masa</h2><span>punto de referencia del diafragma</span></div>
+              <div class="panel__body">
+                <div class="analysis-form-grid">
+                  <div class="field-block"><label for="analysis-cm-x">x<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-x" type="number" step="0.1" value="2.5" data-field="analysis-cm-x" /><span>m</span></div></div>
+                  <div class="field-block"><label for="analysis-cm-y">y<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-y" type="number" step="0.1" value="2" data-field="analysis-cm-y" /><span>m</span></div></div>
+                  <div class="field-block"><label for="analysis-ecc-x">e<sub>acc,x</sub></label><div class="input-with-unit"><input id="analysis-ecc-x" type="number" step="0.01" value="0" data-field="analysis-ecc-x" /><span>m</span></div></div>
+                  <div class="field-block"><label for="analysis-ecc-y">e<sub>acc,y</sub></label><div class="input-with-unit"><input id="analysis-ecc-y" type="number" step="0.01" value="0" data-field="analysis-ecc-y" /><span>m</span></div></div>
+                </div>
+                <p class="field-help">Para un sismo en X, e<sub>acc,y</sub> genera el momento torsor; el signo indica hacia qué lado del CM actúa.</p>
               </div>
-            </div>
+            </section>
 
-            <div class="analysis-subsection">
-              <div class="subheading"><h3>Fuerza y altura por nivel</h3><span>F en kN · h en m</span></div>
-              <div id="analysis-floor-list" class="analysis-floor-list"></div>
-            </div>
-
-            <div class="analysis-subsection">
-              <div class="subheading"><h3>Centro de masa</h3><span>coordenadas del diafragma</span></div>
-              <div class="analysis-form-grid analysis-form-grid--four">
-                <div class="field-block"><label for="analysis-cm-x">x<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-x" type="number" step="0.1" value="2.5" data-field="analysis-cm-x" /><span>m</span></div></div>
-                <div class="field-block"><label for="analysis-cm-y">y<sub>CM</sub></label><div class="input-with-unit"><input id="analysis-cm-y" type="number" step="0.1" value="2" data-field="analysis-cm-y" /><span>m</span></div></div>
-                <div class="field-block"><label for="analysis-ecc-x">e<sub>acc,x</sub></label><div class="input-with-unit"><input id="analysis-ecc-x" type="number" step="0.01" value="0" data-field="analysis-ecc-x" /><span>m</span></div></div>
-                <div class="field-block"><label for="analysis-ecc-y">e<sub>acc,y</sub></label><div class="input-with-unit"><input id="analysis-ecc-y" type="number" step="0.01" value="0" data-field="analysis-ecc-y" /><span>m</span></div></div>
+            <section class="panel" aria-labelledby="analysis-frames-heading">
+              <div class="panel__head"><h2 id="analysis-frames-heading">Ejes resistentes</h2><span>tus grupos de columnas</span></div>
+              <div class="panel__body">
+                <p class="field-help">x₀, y₀ ubican un punto del eje; β es su orientación, antihoraria desde X.</p>
+                <div id="analysis-frame-list" class="analysis-frame-list"></div>
               </div>
-              <p class="field-help">Para una fuerza en X, e<sub>acc,y</sub> genera el momento torsor. El signo indica el lado del centro de masa.</p>
-            </div>
-
-            <div class="analysis-subsection">
-              <div class="subheading"><h3>Ejes resistentes</h3><span>se reutilizan tus grupos</span></div>
-              <p class="field-help">x₀, y₀ ubican un punto del eje; β mide su orientación antihoraria desde X.</p>
-              <div id="analysis-frame-list" class="analysis-frame-list"></div>
-            </div>
-
-            <div id="analysis-steps-card" class="steps-card">
-              <button type="button" class="details-toggle" data-action="toggle-details" data-target="#analysis-steps-card" aria-expanded="false" aria-controls="analysis-steps">Desarrollo paso a paso del análisis <span>ver desarrollo</span></button>
-              <div id="analysis-steps" class="steps-scroll"></div>
-            </div>
+            </section>
           </section>
 
           <section class="analysis-result-panel" aria-labelledby="analysis-result-heading">
-            <div class="analysis-result-card">
-              <div class="result-card__top">
-                <div><span class="result-kicker">RESPUESTA ELÁSTICA</span><h2 id="analysis-result-heading">Resultados del edificio</h2></div>
-                <span class="live-pill">Cálculo en vivo</span>
+            <div class="analysis-result-card readout">
+              <div class="readout__head">
+                <h2 id="analysis-result-heading">Respuesta elástica</h2>
+                <p class="formula-bar"><span class="math">[K]{U} = {F}</span> con 3 grados de libertad por nivel</p>
               </div>
               <div id="analysis-warning" class="analysis-warning" hidden></div>
               <div id="analysis-summary" class="analysis-summary"></div>
             </div>
 
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Modelo en planta</h3><span>CM y ejes resistentes</span></div>
-              <div id="analysis-plan" class="analysis-plan"></div>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading subheading--with-control">
-                <div><h3>Planta deformada</h3><span>Diafragma original vs. desplazado y rotado</span></div>
-                <div class="viz-control"><label for="analysis-deform-level">Nivel</label><select id="analysis-deform-level" data-field="analysis-deform-level"></select></div>
+            <div class="panel plan-pair">
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Planta</h2><span>centro de masa, centro de rigidez y ejes</span></div>
+                <div id="analysis-plan" class="analysis-plan"></div>
               </div>
-              <div id="analysis-deformed-plan" class="analysis-plan"></div>
-              <p id="analysis-deformed-plan-caption" class="viz-caption"></p>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Vista axonométrica deformada</h3><span>Inclinación acumulada por nivel</span></div>
-              <div id="analysis-axonometric" class="analysis-plan"></div>
-              <p id="analysis-axonometric-caption" class="viz-caption"></p>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading subheading--with-control">
-                <div><h3>Elevación de pórtico</h3><span>Deformada del modelo de corte</span></div>
-                <div class="viz-control"><label for="analysis-elevation-axis">Eje</label><select id="analysis-elevation-axis" data-field="analysis-elevation-axis"></select></div>
+              <div class="analysis-plan-card">
+                <div class="panel__head subheading--with-control">
+                  <h2>Planta deformada</h2>
+                  <div class="viz-control"><label for="analysis-deform-level">Nivel</label><select id="analysis-deform-level" data-field="analysis-deform-level"></select></div>
+                </div>
+                <div id="analysis-deformed-plan" class="analysis-plan"></div>
+                <p id="analysis-deformed-plan-caption" class="viz-caption"></p>
               </div>
-              <div id="analysis-frame-elevation" class="analysis-elevation"></div>
             </div>
 
-            <div class="analysis-plan-card">
-              <div class="subheading subheading--with-control">
-                <div><h3>Matriz local del pórtico</h3><span>Forma simbólica y valores calculados</span></div>
-                <div class="viz-control"><label for="analysis-matrix-axis">Pórtico</label><select id="analysis-matrix-axis" data-field="analysis-matrix-axis"></select></div>
-              </div>
-              <div id="analysis-frame-matrix"></div>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Fuerza sísmica por piso</h3><span>Entrada F por nivel</span></div>
-              <div id="analysis-floor-forces-chart" class="analysis-chart"></div>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Cortante de piso</h3><span>Σ F desde el techo hasta el nivel</span></div>
-              <div id="analysis-story-shear-chart" class="analysis-chart"></div>
-            </div>
-
-            <div class="analysis-plan-card">
-              <div class="subheading"><h3>Momento en columna</h3><span>Momento de extremo del eje seleccionado arriba</span></div>
-              <div id="analysis-column-moment-chart" class="analysis-chart"></div>
-            </div>
-
-            <div class="analysis-table-card modal-card" aria-labelledby="analysis-modal-heading">
-              <div class="subheading subheading--with-control">
-                <div><h3 id="analysis-modal-heading">Análisis modal</h3><span>Periodos, frecuencias y participación de masa</span></div>
+            <div class="panel analysis-table-card modal-card">
+              <div class="panel__head subheading--with-control">
+                <h2 id="analysis-modal-heading">Análisis modal</h2>
                 <div class="viz-control"><label for="analysis-modal-mode">Modo</label><select id="analysis-modal-mode" data-field="analysis-modal-mode"></select></div>
               </div>
-              <div id="analysis-modal"></div>
+              <div id="analysis-modal" class="panel__body"></div>
             </div>
 
-            <div id="analysis-displacements" class="analysis-table-card"></div>
-            <div id="analysis-frames" class="analysis-table-card"></div>
+            <div class="panel plan-pair">
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Vista axonométrica deformada</h2></div>
+                <div id="analysis-axonometric" class="analysis-plan"></div>
+                <p id="analysis-axonometric-caption" class="viz-caption"></p>
+              </div>
+              <div class="analysis-plan-card">
+                <div class="panel__head subheading--with-control">
+                  <h2>Elevación de pórtico</h2>
+                  <div class="viz-control"><label for="analysis-elevation-axis">Eje</label><select id="analysis-elevation-axis" data-field="analysis-elevation-axis"></select></div>
+                </div>
+                <div id="analysis-frame-elevation" class="analysis-elevation"></div>
+              </div>
+            </div>
+
+            <div class="panel chart-trio">
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Fuerza por piso</h2><span>kN</span></div>
+                <div id="analysis-floor-forces-chart" class="analysis-chart"></div>
+              </div>
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Cortante de piso</h2><span>kN</span></div>
+                <div id="analysis-story-shear-chart" class="analysis-chart"></div>
+              </div>
+              <div class="analysis-plan-card">
+                <div class="panel__head"><h2>Momento en columna</h2><span>eje de la elevación</span></div>
+                <div id="analysis-column-moment-chart" class="analysis-chart"></div>
+              </div>
+            </div>
+
+            <div id="analysis-displacements" class="analysis-table-card panel"></div>
+            <div id="analysis-frames" class="analysis-table-card panel"></div>
+
+            <div class="panel analysis-plan-card">
+              <div class="panel__head subheading--with-control">
+                <h2>Matriz local del pórtico</h2>
+                <div class="viz-control"><label for="analysis-matrix-axis">Pórtico</label><select id="analysis-matrix-axis" data-field="analysis-matrix-axis"></select></div>
+              </div>
+              <div id="analysis-frame-matrix" class="panel__body"></div>
+            </div>
+
+            <div id="analysis-steps-card" class="steps-card panel">
+              <button type="button" class="details-toggle panel__head" data-action="toggle-details" data-target="#analysis-steps-card" aria-expanded="false" aria-controls="analysis-steps"><span class="details-toggle__title">Memoria de cálculo del análisis</span><span>mostrar</span></button>
+              <div id="analysis-steps" class="steps-scroll"></div>
+            </div>
           </section>
         </div>
 
-        <section class="analysis-method" aria-labelledby="analysis-method-heading">
-          <div class="theory-title"><span aria-hidden="true">∑</span><div><p class="eyebrow">CÓMO SE CONECTAN LAS ETAPAS</p><h2 id="analysis-method-heading">Ruta matricial del análisis</h2></div></div>
-          <div class="analysis-method-grid">
-            <article><span>01</span><h3>Matriz de cada eje</h3><p>Las rigideces de los pisos forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></article>
-            <article><span>02</span><h3>Posición y orientación</h3><p>G relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo perpendicular r.</p></article>
-            <article><span>03</span><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G y el sistema K<sub>P3D</sub>U = F entrega desplazamientos y giros. La inversa F = K<sup>−1</sup> es la matriz de flexibilidad.</p></article>
-            <article><span>04</span><h3>Análisis modal</h3><p>Con la masa m y la inercia J = m(a²+b²)/12 de cada diafragma se resuelve Kφ = ω²Mφ: periodos T = 2π/ω, formas de modo y masa participativa.</p></article>
-          </div>
+        <section class="page-shell stage-foot">
+          <details class="theory-section analysis-method">
+            <summary>Ruta matricial y alcance del análisis</summary>
+            <ol class="analysis-method-grid">
+              <li><h3>Matriz de cada eje</h3><p>Las rigideces de piso forman K<sub>eje</sub>. Para dos niveles: [k₁+k₂, −k₂; −k₂, k₂].</p></li>
+              <li><h3>Posición y orientación</h3><p>[G] relaciona el movimiento del diafragma con el eje mediante cos β, sin β y el brazo r.</p></li>
+              <li><h3>Ensamblaje y solución</h3><p>K<sub>P3D</sub> = Σ GᵀK<sub>eje</sub>G; resolver K<sub>P3D</sub>U = F da desplazamientos y giros. F = K<sup>−1</sup> es la matriz de flexibilidad.</p></li>
+              <li><h3>Análisis modal</h3><p>Con m y J = m(a²+b²)/12 por diafragma se resuelve Kφ = ω²Mφ: periodos, formas de modo y masa participativa.</p></li>
+            </ol>
+            <p class="analysis-scope">Modelo lineal educativo con diafragmas rígidos. Si defines K<sub>x</sub> o K<sub>y</sub> por piso en Metrado, el aporte de los ejes se escala en ese nivel. No incluye vigas deformables, interacción suelo–estructura, segundo orden, la combinación 100 % + 30 % ni la combinación espectral de la E.030.</p>
+          </details>
         </section>
-
-        <div class="analysis-scope">
-          <strong>Alcance de esta etapa</strong>
-          <p>Modelo lineal educativo con diafragmas rígidos y tres grados de libertad por nivel. La geometría base de los grupos se repite; cuando defines Kx o Ky por piso en Metrado, su aporte se escala proporcionalmente en ese nivel. No incluye vigas deformables, interacción suelo–estructura, segundo orden, combinación ortogonal 100% + 30% ni la combinación espectral de respuestas de la E.030. El análisis modal usa las masas del Metrado.</p>
-        </div>
       </section>
 
-      <footer><div class="page-shell"><span>SismoLab · Desarrollo progresivo para análisis sísmico E.030</span><span>Rigidez · metrado · análisis estructural</span></div></footer>
+      <footer class="site-footer"><div class="page-shell"><span>SismoLab · Análisis sísmico educativo según la E.030</span><span>Requiere la revisión de un ingeniero estructural</span></div></footer>
     </main>
     <script type="py" src="./app.py" config="./pyscript.toml"></script>
   </body>

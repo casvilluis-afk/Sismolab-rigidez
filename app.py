@@ -380,9 +380,9 @@ def group_card(group: ColumnGroup, index: int) -> str:
         """
 
     return f"""
-    <article class="column-card" data-card-id="{group.id}">
+    <article class="column-card" data-card-id="{group.id}" data-direction="{group.direction}">
       <div class="column-card__head">
-        <div><span class="column-code">C{index + 1}</span><div><h3>Grupo de columnas {index + 1}</h3><p>{material_label(group.material)} · {direction_label(group.direction)}</p></div></div>
+        <div><span class="column-code">C{index + 1}</span><div><h3>{escape(_display_axis(group.axis))}</h3><p>{group.quantity} × {shape_name(group.shape)} · {material_label(group.material).lower()} · trabaja en {group.direction}</p></div></div>
         {remove_button}
       </div>
       <div class="form-grid form-grid--compact">
@@ -404,7 +404,7 @@ def group_card(group: ColumnGroup, index: int) -> str:
         <div class="field-block">
           <label for="axis-{group.id}">Eje estructural</label>
           <div class="axis-input-row">
-            <span>EJE</span>
+            <span aria-hidden="true">Eje</span>
             <input id="axis-{group.id}" type="text" maxlength="12" value="{axis_value}" placeholder="1, 2, A…" data-group="{group.id}" data-field="axis" />
           </div>
           <div class="axis-coordinate-grid">
@@ -1297,7 +1297,7 @@ def render_rigidity_plan_selector() -> None:
         selected = " selected" if index == rigidity_plan_level else ""
         options.append(f'<option value="{index}"{selected}>{_rigidity_level_name(index)}</option>')
     by_id("rigidity-plan-level").innerHTML = "".join(options)
-    by_id("plan-view-level-title").textContent = _rigidity_level_name(rigidity_plan_level)
+    by_id("plan-view-level-title").textContent = f"Planta: {_rigidity_level_name(rigidity_plan_level).lower()}"
 
 
 def sync_model_geometry_to_levels() -> None:
@@ -1377,8 +1377,6 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
     extra_lines = [list(geometry["shallow"]), list(geometry["steep"])] if has_wing else []
     all_x = xs + ([peak[0]] if has_wing else [])
     all_y = ys + ([peak[1]] if has_wing else [])
-    guide_lines = [((xs[0], y_value), (xs[-1], y_value)) for y_value in ys]
-    guide_lines += [((x_value, ys[0]), (x_value, ys[-1])) for x_value in xs]
     column_labels = [(str(index + 1), x_value) for index, x_value in enumerate(xs)]
     station_labels = [(chr(65 + index), y_value) for index, y_value in enumerate(reversed(ys))]
     top_gaps = []
@@ -1389,12 +1387,16 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
     for span_index in range(max(0, len(ys) - 1)):
         is_outer = span_index in (0, len(ys) - 2)
         left_gaps.append(("L3" if is_outer else "L4", (ys[span_index] + ys[span_index + 1]) / 2.0))
-    margin = 3.0
+    margin = 0.6
     min_x, max_x = min(all_x) - margin, max(all_x) + margin
     min_y, max_y = min(all_y) - margin, max(all_y) + margin
     width, height = max(max_x - min_x, 1.0), max(max_y - min_y, 1.0)
-    scale = min(520.0 / width, 380.0 / height)
-    pad_left, pad_top, pad_right, pad_bottom = 52.0, 46.0, 28.0, 32.0
+    scale = min(520.0 / width, 340.0 / height)
+    # Márgenes en píxeles para ejes con burbuja (arriba e izquierda) y cotas
+    # (abajo y derecha), como en un plano estructural.
+    pad_left, pad_top, pad_right, pad_bottom = 66.0, 66.0, 64.0, 58.0
+    bubble_radius = 11.0
+    bubble_gap = 26.0
 
     def to_px(point_value: tuple[float, float]) -> tuple[float, float]:
         x_value, y_value = point_value
@@ -1422,10 +1424,20 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
             f'<text x="{center_x:.1f}" y="{center_y + 4:.1f}" class="dd-slab-label" '
             f'text-anchor="middle">{escape(slab.label)}</text>'
         )
-    for start, end in guide_lines:
-        start_px, end_px = to_px(start), to_px(end)
+    left_px = to_px((xs[0], ys[0]))[0]
+    right_px = to_px((xs[-1], ys[0]))[0]
+    bottom_px = to_px((xs[0], ys[0]))[1]
+    top_px = to_px((xs[0], ys[-1]))[1]
+    # Ejes de la retícula: línea de centro que sobresale hasta su burbuja.
+    for x_value in xs:
+        x_px, _ = to_px((x_value, ys[0]))
         parts.append(
-            f'<line x1="{start_px[0]:.1f}" y1="{start_px[1]:.1f}" x2="{end_px[0]:.1f}" y2="{end_px[1]:.1f}" class="dd-grid-beam"/>'
+            f'<line x1="{x_px:.1f}" y1="{bottom_px + 8:.1f}" x2="{x_px:.1f}" y2="{top_px - bubble_gap:.1f}" class="dd-grid-beam"/>'
+        )
+    for y_value in ys:
+        _, y_px = to_px((xs[0], y_value))
+        parts.append(
+            f'<line x1="{left_px - bubble_gap:.1f}" y1="{y_px:.1f}" x2="{right_px + 8:.1f}" y2="{y_px:.1f}" class="dd-grid-beam"/>'
         )
     for line in extra_lines:
         for index in range(len(line) - 1):
@@ -1448,12 +1460,35 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
             f'<text x="{(start_px[0] + end_px[0]) / 2.0:.1f}" y="{(start_px[1] + end_px[1]) / 2.0 - 7:.1f}" '
             f'class="dd-beam-label" text-anchor="middle">{escape(beam.label)}</text>'
         )
-    for label, x_value in top_gaps:
-        x_px, _ = to_px((x_value, max_y))
-        parts.append(f'<text x="{x_px:.1f}" y="{pad_top - 25:.1f}" class="dd-dim-label" text-anchor="middle">{label}</text>')
-    for label, y_value in left_gaps:
-        _, y_px = to_px((min_x, y_value))
-        parts.append(f'<text x="{pad_left - 34:.1f}" y="{y_px + 4:.1f}" class="dd-dim-label" text-anchor="middle">{label}</text>')
+    # Cotas: línea de dimensión con marcas oblicuas en cada eje.
+    dim_y = bottom_px + 34.0
+    parts.append(f'<line x1="{left_px - 6:.1f}" y1="{dim_y:.1f}" x2="{right_px + 6:.1f}" y2="{dim_y:.1f}" class="dd-dim-line"/>')
+    for x_value in xs:
+        x_px, _ = to_px((x_value, ys[0]))
+        parts.append(f'<line x1="{x_px:.1f}" y1="{bottom_px + 12:.1f}" x2="{x_px:.1f}" y2="{dim_y + 5:.1f}" class="dd-dim-line"/>')
+        parts.append(f'<line x1="{x_px - 4:.1f}" y1="{dim_y + 4:.1f}" x2="{x_px + 4:.1f}" y2="{dim_y - 4:.1f}" class="dd-dim-tick"/>')
+    for span_index, (label, x_value) in enumerate(top_gaps):
+        x_px, _ = to_px((x_value, ys[0]))
+        span = xs[span_index + 1] - xs[span_index]
+        parts.append(f'<text x="{x_px:.1f}" y="{dim_y - 6:.1f}" class="dd-dim-label" text-anchor="middle">{format_number(span, 2)}</text>')
+        parts.append(f'<text x="{x_px:.1f}" y="{dim_y + 16:.1f}" class="dd-slab-label" text-anchor="middle">{label}</text>')
+    dim_x = right_px + 34.0
+    parts.append(f'<line x1="{dim_x:.1f}" y1="{top_px - 6:.1f}" x2="{dim_x:.1f}" y2="{bottom_px + 6:.1f}" class="dd-dim-line"/>')
+    for y_value in ys:
+        _, y_px = to_px((xs[-1], y_value))
+        parts.append(f'<line x1="{right_px + 12:.1f}" y1="{y_px:.1f}" x2="{dim_x + 5:.1f}" y2="{y_px:.1f}" class="dd-dim-line"/>')
+        parts.append(f'<line x1="{dim_x - 4:.1f}" y1="{y_px + 4:.1f}" x2="{dim_x + 4:.1f}" y2="{y_px - 4:.1f}" class="dd-dim-tick"/>')
+    for span_index, (label, y_value) in enumerate(left_gaps):
+        _, y_px = to_px((xs[-1], y_value))
+        span = ys[span_index + 1] - ys[span_index]
+        parts.append(
+            f'<text x="{dim_x - 6:.1f}" y="{y_px:.1f}" class="dd-dim-label" text-anchor="middle" '
+            f'transform="rotate(-90 {dim_x - 6:.1f} {y_px:.1f})">{format_number(span, 2)}</text>'
+        )
+        parts.append(
+            f'<text x="{dim_x + 16:.1f}" y="{y_px:.1f}" class="dd-slab-label" text-anchor="middle" '
+            f'transform="rotate(-90 {dim_x + 16:.1f} {y_px:.1f})">{label}</text>'
+        )
     # Mismo orden que en la vista isométrica: cada grupo ocupa su eje y sus
     # unidades se distribuyen en estaciones A, B, C... de arriba hacia abajo.
     for axis_index, (_axis, axis_units, axis_total) in enumerate(layout):
@@ -1470,18 +1505,22 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
         if hidden_count:
             label_x, label_y = to_px((xs[axis_index], ys[0]))
             parts.append(
-                f'<text x="{label_x:.1f}" y="{label_y + 20:.1f}" class="dd-overflow" '
+                f'<text x="{label_x + 14:.1f}" y="{label_y + 16:.1f}" class="dd-overflow" '
                 f'text-anchor="middle">+{hidden_count}</text>'
             )
+    bubble_y = top_px - bubble_gap - bubble_radius
     for label, x_value in column_labels:
-        x_px, _ = to_px((x_value, max_y))
-        parts.append(f'<text x="{x_px:.1f}" y="{pad_top - 9:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
+        x_px, _ = to_px((x_value, ys[0]))
+        parts.append(f'<circle cx="{x_px:.1f}" cy="{bubble_y:.1f}" r="{bubble_radius:.0f}" class="dd-bubble"/>')
+        parts.append(f'<text x="{x_px:.1f}" y="{bubble_y + 4.5:.1f}" class="dd-axis-label" text-anchor="middle">{escape(label)}</text>')
     if has_wing:
-        peak_px, _ = to_px(peak)
-        parts.append(f'<text x="{peak_px:.1f}" y="{pad_top - 9:.1f}" class="dd-axis-label dd-axis-label--wing" text-anchor="middle">ala</text>')
+        peak_px, peak_py = to_px(peak)
+        parts.append(f'<text x="{peak_px:.1f}" y="{peak_py - 10:.1f}" class="dd-axis-label dd-axis-label--wing" text-anchor="middle">ala</text>')
+    bubble_x = left_px - bubble_gap - bubble_radius
     for label, y_value in station_labels:
-        _, y_px = to_px((min_x, y_value))
-        parts.append(f'<text x="{pad_left - 13:.1f}" y="{y_px + 4:.1f}" class="dd-axis-label" text-anchor="middle">{label}</text>')
+        _, y_px = to_px((xs[0], y_value))
+        parts.append(f'<circle cx="{bubble_x:.1f}" cy="{y_px:.1f}" r="{bubble_radius:.0f}" class="dd-bubble"/>')
+        parts.append(f'<text x="{bubble_x:.1f}" y="{y_px + 4.5:.1f}" class="dd-axis-label" text-anchor="middle">{label}</text>')
     parts.append("</svg>")
     return "".join(parts)
 
@@ -1804,10 +1843,10 @@ def render_analysis_inputs() -> None:
         "1 nivel" if analysis_level_count == 1 else f"{analysis_level_count} niveles"
     )
     by_id("analysis-alpha").value = input_number(analysis_alpha)
-    by_id("analysis-cm-x").value = input_number(analysis_cm_x)
-    by_id("analysis-cm-y").value = input_number(analysis_cm_y)
-    by_id("analysis-ecc-x").value = input_number(analysis_ecc_x)
-    by_id("analysis-ecc-y").value = input_number(analysis_ecc_y)
+    by_id("analysis-cm-x").value = input_number(analysis_cm_x, 4)
+    by_id("analysis-cm-y").value = input_number(analysis_cm_y, 4)
+    by_id("analysis-ecc-x").value = input_number(analysis_ecc_x, 4)
+    by_id("analysis-ecc-y").value = input_number(analysis_ecc_y, 4)
 
     floor_rows = []
     for index in range(analysis_level_count):
@@ -1816,7 +1855,7 @@ def render_analysis_inputs() -> None:
             <div class="analysis-floor-row">
               <strong>Nivel {index + 1}</strong>
               <div class="analysis-mini-field"><input type="number" min="1" max="12" step="0.05" value="{input_number(analysis_heights[index])}" data-field="analysis-height" data-level="{index}" aria-label="Altura del nivel {index + 1}" /><span>h m</span></div>
-              <div class="analysis-mini-field"><input type="number" step="1" value="{input_number(analysis_forces[index])}" data-field="analysis-force" data-level="{index}" aria-label="Fuerza sísmica del nivel {index + 1}" /><span>F kN</span></div>
+              <div class="analysis-mini-field"><input type="number" step="1" value="{input_number(analysis_forces[index], 3)}" data-field="analysis-force" data-level="{index}" aria-label="Fuerza sísmica del nivel {index + 1}" /><span>F kN</span></div>
             </div>
             """
         )
@@ -3572,27 +3611,27 @@ def use_modal_period(period: float) -> None:
 STAGE_INTRO = {
     "rigidity": {
         "title": "SismoLab · Rigidez lateral",
-        "eyebrow": "RIGIDEZ LATERAL · MODELO DE CORTE",
+        "eyebrow": "Etapa 1 de 3",
         "heading": "Rigidez lateral del entrepiso",
-        "copy": "Calcula el aporte elástico de columnas cuadradas y circulares de concreto armado, mostrando el procedimiento para comprobarlo a mano.",
-        "note_title": "Hipótesis principal",
-        "note_copy": "Viga o losa infinitamente rígida; los giros dependen de las conexiones seleccionadas.",
+        "copy": "Modela la planta con sus columnas, vigas y losas, y obtén la rigidez de cada eje con el procedimiento para comprobarla a mano.",
+        "note_title": "Hipótesis",
+        "note_copy": "Losa infinitamente rígida en su plano; los giros dependen de las conexiones de cada columna.",
     },
     "loads": {
         "title": "SismoLab · Metrado de cargas",
-        "eyebrow": "METRADO DE CARGAS · E.020 / E.030",
-        "heading": "Metrado, centro de masa y fuerza por nivel",
-        "copy": "Desglosa columnas, vigas, losa, cargas muertas y vivas para obtener el peso, el centro de masa y la fuerza sísmica de cada piso.",
-        "note_title": "Método actual",
-        "note_copy": "Metrado por componentes y método estático equivalente (E.030), con %CV según categoría de edificación.",
+        "eyebrow": "Etapa 2 de 3",
+        "heading": "Metrado, centro de masa y fuerza sísmica",
+        "copy": "Suma columnas, vigas, losa y cargas de uso para obtener el peso, el centro de masa y la fuerza estática de cada piso según la E.030.",
+        "note_title": "Método",
+        "note_copy": "Metrado por componentes y método estático equivalente, con el porcentaje de carga viva que fija la categoría.",
     },
     "analysis": {
         "title": "SismoLab · Análisis estructural",
-        "eyebrow": "ANÁLISIS ESTRUCTURAL · DIAFRAGMA RÍGIDO",
-        "heading": "Análisis pseudotridimensional del edificio",
-        "copy": "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros y cortantes.",
-        "note_title": "Modelo actual",
-        "note_copy": "Tres grados de libertad por nivel y comportamiento elástico lineal.",
+        "eyebrow": "Etapa 3 de 3",
+        "heading": "Análisis pseudotridimensional y modal",
+        "copy": "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros, cortantes y modos de vibración.",
+        "note_title": "Modelo",
+        "note_copy": "Tres grados de libertad por diafragma y comportamiento elástico lineal.",
     },
 }
 
