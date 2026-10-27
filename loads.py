@@ -54,7 +54,7 @@ class LevelLoad:
 LIVE_LOAD_PRESETS: dict[str, tuple[str, float]] = {
     "vivienda": ("Vivienda", 2.0),
     "oficina": ("Oficina", 2.5),
-    "aula": ("Aula / centro de enseñanza", 3.0),
+    "aula": ("Aula / centro de enseñanza", 2.5),
     "corredor_publico": ("Corredores y escaleras de acceso público", 4.0),
     "tienda": ("Tiendas / centros comerciales", 5.0),
     "biblioteca_salas": ("Bibliotecas: salas de lectura", 3.0),

@@ -16,6 +16,8 @@ from stiffness import (
     boundary_description,
     boundary_factor,
     analyze_pseudotridimensional,
+    invert_matrix,
+    modal_analysis,
     assess_torsional_irregularity,
     calculate_group,
     calculate_story,
@@ -93,6 +95,7 @@ analysis_ecc_x = 0.0
 analysis_ecc_y = 0.0
 analysis_view_level = None
 analysis_selected_axis_id = None
+analysis_modal_mode = 0
 rigidity_plan_level = 0
 plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
 plan_angle_a = None
@@ -1889,8 +1892,8 @@ def _analysis_steps_html(result: dict) -> str:
     step3_blocks = []
     for frame in frames:
         formula = (
-            f"r_{frame['axis']} = -({format_number(frame['x0'], 3)} - {format_number(analysis_cm_x, 3)})·sin({format_number(frame['beta'], 1)}°) "
-            f"+ ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
+            f"r_{frame['axis']} = ({format_number(frame['x0'], 3)} - {format_number(analysis_cm_x, 3)})·sin({format_number(frame['beta'], 1)}°) "
+            f"- ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
         )
         step3_blocks.append(
             f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
@@ -1900,7 +1903,7 @@ def _analysis_steps_html(result: dict) -> str:
     step3 = f"""
       <div class="step-block">
         <h4><span class="step-badge">3</span>Brazos r<sub>j</sub> y matrices de transformación [G<sub>j</sub>]</h4>
-        <p><code>r = -(x₀-x_CM)·sinβ + (y₀-y_CM)·cosβ</code>. [G] relaciona el desplazamiento del eje con {{u<sub>x</sub>, u<sub>y</sub>, θ}} del diafragma, nivel a nivel.</p>
+        <p><code>r = (x₀-x_CM)·sinβ − (y₀-y_CM)·cosβ</code> (giro θ positivo antihorario). [G] relaciona el desplazamiento del eje con {{u<sub>x</sub>, u<sub>y</sub>, θ}} del diafragma, nivel a nivel.</p>
         {"".join(step3_blocks)}
       </div>
     """
@@ -1975,9 +1978,9 @@ def _analysis_steps_html(result: dict) -> str:
       <div class="step-block">
         <h4><span class="step-badge">7</span>Centro de rigidez (CR)</h4>
         <p>Se anula el acople traslación-giro de la matriz de nivel 1: a_xx={_compact_number(a_xx)}, a_xy={_compact_number(a_xy)}, a_yy={_compact_number(a_yy)}, b_x={_compact_number(b_x)}, b_y={_compact_number(b_y)} ({stiffness_unit}, referidos al nivel 1).</p>
-        <div class="step-formula">q_x = (-b_x·a_yy + a_xy·b_y) / (a_xx·a_yy - a_xy²)
-q_y = (a_xy·b_x - a_xx·b_y) / (a_xx·a_yy - a_xy²)
-CR = (x_CM + q_y ; y_CM - q_x)</div>
+        <div class="step-formula">dx = (a_xx·b_y - a_xy·b_x) / (a_xx·a_yy - a_xy²)
+dy = (a_xy·b_y - a_yy·b_x) / (a_xx·a_yy - a_xy²)
+CR = (x_CM + dx ; y_CM + dy)</div>
         <p><strong>{escape(cr_text)}</strong></p>
       </div>
     """
@@ -2317,8 +2320,8 @@ def render_action_charts(result: dict) -> None:
         by_id("analysis-column-moment-chart").innerHTML = _bar_chart_svg(moment_rows, "kN·m", "chart-bar-violet")
     else:
         by_id("analysis-column-moment-chart").innerHTML = (
-            '<p class="matrix-caption">Este eje no tiene ambos extremos empotrado–rígido, '
-            "por lo que no se calcula el momento de extremo Vh/2.</p>"
+            '<p class="matrix-caption">Este eje tiene ambos extremos articulados: '
+            "no aporta rigidez lateral ni desarrolla momento de extremo.</p>"
         )
 
 
@@ -2342,6 +2345,256 @@ def _clear_analysis_results(message: str) -> None:
     by_id("analysis-floor-forces-chart").innerHTML = placeholder
     by_id("analysis-story-shear-chart").innerHTML = placeholder
     by_id("analysis-column-moment-chart").innerHTML = placeholder
+    by_id("analysis-modal").innerHTML = placeholder
+    by_id("analysis-modal-mode").innerHTML = ""
+
+
+MODAL_DIRECTION_LABELS = {"X": "Traslación X", "Y": "Traslación Y", "RZ": "Torsión"}
+
+
+def _analysis_level_masses() -> list[dict[str, float]]:
+    """Masa traslacional, inercia rotacional y posición del CM de cada diafragma.
+
+    Se toman del metrado (peso sísmico P = CM + %CV) para que el análisis modal
+    use exactamente las mismas masas que la fuerza estática.
+    """
+    if len(load_levels) != analysis_level_count:
+        raise ValueError("Los niveles del metrado no coinciden con los del análisis.")
+    masses = []
+    for level in load_levels:
+        properties = _level_seismic_mass_properties(
+            level, column_takeoff_rows(level.height), loads_category
+        )
+        mass = float(properties["mass"])
+        if mass <= 0:
+            raise ValueError(f"El nivel {level.label} no tiene peso sísmico; completa su metrado.")
+        inertia = mass * (float(level.plan_x) ** 2 + float(level.plan_y) ** 2) / 12.0
+        masses.append(
+            {
+                "label": level.label,
+                "weight": float(properties["weight"]),
+                "mass": mass,
+                "inertia": inertia,
+                "center_x": float(properties["center_x"]),
+                "center_y": float(properties["center_y"]),
+                "dx": float(properties["center_x"]) - analysis_cm_x,
+                "dy": float(properties["center_y"]) - analysis_cm_y,
+            }
+        )
+    return masses
+
+
+def _compute_modal(result: dict) -> tuple[dict | None, list[dict[str, float]] | None, str]:
+    try:
+        masses = _analysis_level_masses()
+        modal = modal_analysis(result["global_matrix"], masses)
+    except (ValueError, ZeroDivisionError) as error:
+        return None, None, str(error)
+    return modal, masses, ""
+
+
+def _modes_for_ratio(modes: list[dict], key: str, target: float = 0.90) -> int | None:
+    for index, mode in enumerate(modes):
+        if mode["cumulative"][key] >= target - 1e-9:
+            return index + 1
+    return None
+
+
+def _first_mode(modes: list[dict], key: str) -> tuple[int, dict] | None:
+    candidates = [(index, mode) for index, mode in enumerate(modes) if mode["dominant"] == key]
+    if not candidates:
+        return None
+    return max(candidates[:3], key=lambda item: item[1]["mass_ratio"][key])
+
+
+def _mode_shape_svg(mode: dict, levels: int) -> str:
+    heights = analysis_heights[:levels]
+    total_height = sum(heights) or 1.0
+    cumulative = [0.0]
+    for height in heights:
+        cumulative.append(cumulative[-1] + height)
+    ux = [0.0] + [mode["shape"][3 * level] for level in range(levels)]
+    uy = [0.0] + [mode["shape"][3 * level + 1] for level in range(levels)]
+    center_x, half_width = 120.0, 82.0
+    top, bottom = 22.0, 252.0
+
+    def point(value: float, height: float) -> tuple[float, float]:
+        return center_x + value * half_width, bottom - height / total_height * (bottom - top)
+
+    def polyline(values: list[float], css: str) -> str:
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (point(v, h) for v, h in zip(values, cumulative)))
+        return f'<polyline class="{css}" points="{points}"/>'
+
+    parts = [
+        '<svg viewBox="0 0 240 280" role="img" aria-label="Forma de modo por nivel">',
+        f'<line class="modal-shape-ref" x1="{center_x}" y1="{top - 6}" x2="{center_x}" y2="{bottom}"/>',
+        f'<line class="modal-shape-ref" x1="{center_x - half_width}" y1="{bottom}" x2="{center_x + half_width}" y2="{bottom}"/>',
+        polyline(ux, "modal-shape-x"),
+        polyline(uy, "modal-shape-y"),
+    ]
+    for level in range(1, levels + 1):
+        for values, css in ((ux, "modal-shape-node-x"), (uy, "modal-shape-node-y")):
+            x_pos, y_pos = point(values[level], cumulative[level])
+            parts.append(f'<circle class="{css}" cx="{x_pos:.1f}" cy="{y_pos:.1f}" r="3.6"/>')
+        _, label_y = point(0.0, cumulative[level])
+        parts.append(f'<text class="modal-shape-label" x="4" y="{label_y + 3:.1f}">N{level}</text>')
+    parts.append(f'<text class="modal-shape-label" x="{center_x - half_width}" y="{bottom + 16}" text-anchor="middle">−1</text>')
+    parts.append(f'<text class="modal-shape-label" x="{center_x + half_width}" y="{bottom + 16}" text-anchor="middle">+1</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_modal_results(result: dict, modal: dict | None, masses: list | None, error: str) -> None:
+    global analysis_modal_mode
+    container = by_id("analysis-modal")
+    selector = by_id("analysis-modal-mode")
+    if modal is None:
+        selector.innerHTML = ""
+        container.innerHTML = (
+            '<p class="matrix-caption">El análisis modal necesita la masa de cada nivel, tomada del Metrado. '
+            f"{escape(error)}</p>"
+        )
+        return
+
+    modes = modal["modes"]
+    levels = result["levels"]
+    if not 0 <= analysis_modal_mode < len(modes):
+        analysis_modal_mode = 0
+    selector.innerHTML = "".join(
+        f'<option value="{index}"{" selected" if index == analysis_modal_mode else ""}>'
+        f"Modo {index + 1} · T = {format_number(mode['period'], 3)} s</option>"
+        for index, mode in enumerate(modes)
+    )
+
+    first_x = _first_mode(modes, "X")
+    first_y = _first_mode(modes, "Y")
+    needed_x = _modes_for_ratio(modes, "X")
+    needed_y = _modes_for_ratio(modes, "Y")
+    needed = max(needed_x or 0, needed_y or 0, min(3, len(modes)))
+    total_weight = sum(item["weight"] for item in masses)
+
+    def metric(label: str, value: str, unit: str) -> str:
+        return f'<div class="analysis-metric"><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>'
+
+    summary = "".join(
+        (
+            metric("Periodo fundamental T₁", format_number(modes[0]["period"], 3), f"s · {MODAL_DIRECTION_LABELS[modes[0]['dominant']]}"),
+            metric("Periodo dominante X", format_number(first_x[1]["period"], 3) if first_x else "—", f"s · modo {first_x[0] + 1}" if first_x else "sin modo en X"),
+            metric("Periodo dominante Y", format_number(first_y[1]["period"], 3) if first_y else "—", f"s · modo {first_y[0] + 1}" if first_y else "sin modo en Y"),
+            metric("Masa total", format_number(sum(item["mass"] for item in masses), 2), f"t · P = {format_number(total_weight, 1)} kN"),
+        )
+    )
+
+    check_ok = needed_x is not None and needed_y is not None
+    check_text = (
+        f"E.030 art. 29.1.2: con los primeros {needed} modos la masa efectiva acumulada supera el 90 % "
+        f"en X ({format_number(modes[needed - 1]['cumulative']['X'] * 100, 1)} %) y en Y "
+        f"({format_number(modes[needed - 1]['cumulative']['Y'] * 100, 1)} %); considera además al menos los 3 primeros modos."
+        if check_ok
+        else "La masa efectiva no alcanza el 90 % en ambas direcciones; revisa la rigidez y la distribución de masas."
+    )
+
+    rows = []
+    for index, mode in enumerate(modes):
+        ratio = mode["mass_ratio"]
+        total = mode["cumulative"]
+        selected = ' class="is-selected"' if index == analysis_modal_mode else ""
+        rows.append(
+            f"<tr{selected}><td>{index + 1}</td><td>{format_number(mode['period'], 4)}</td>"
+            f"<td>{format_number(mode['frequency'], 3)}</td><td>{format_number(mode['omega'], 3)}</td>"
+            f"<td>{MODAL_DIRECTION_LABELS[mode['dominant']]}</td>"
+            f"<td>{format_number(mode['participation']['X'], 3)}</td><td>{format_number(mode['participation']['Y'], 3)}</td>"
+            f"<td>{format_number(ratio['X'] * 100, 2)}</td><td>{format_number(ratio['Y'] * 100, 2)}</td><td>{format_number(ratio['RZ'] * 100, 2)}</td>"
+            f"<td>{format_number(total['X'] * 100, 2)}</td><td>{format_number(total['Y'] * 100, 2)}</td><td>{format_number(total['RZ'] * 100, 2)}</td></tr>"
+        )
+
+    selected_mode = modes[analysis_modal_mode]
+    shape_rows = []
+    for level in range(levels - 1, -1, -1):
+        shape_rows.append(
+            f"<tr><td>Nivel {level + 1}</td><td>{format_number(selected_mode['shape'][3 * level], 4)}</td>"
+            f"<td>{format_number(selected_mode['shape'][3 * level + 1], 4)}</td>"
+            f"<td>{format_number(selected_mode['shape'][3 * level + 2], 5)}</td></tr>"
+        )
+
+    mass_rows = []
+    for level in range(levels - 1, -1, -1):
+        item = masses[level]
+        mass_rows.append(
+            f"<tr><td>{escape(str(item['label']))}</td><td>{format_number(item['weight'], 2)}</td>"
+            f"<td>{format_number(item['mass'], 3)}</td><td>{format_number(item['inertia'], 2)}</td>"
+            f"<td>{format_number(item['center_x'], 3)}</td><td>{format_number(item['center_y'], 3)}</td></tr>"
+        )
+
+    buttons = []
+    if first_x:
+        buttons.append(
+            f'<button class="button" type="button" data-action="use-modal-period" data-value="{input_number(first_x[1]["period"])}">'
+            f"Usar T<sub>X</sub> = {format_number(first_x[1]['period'], 3)} s en el metrado</button>"
+        )
+    if first_y:
+        buttons.append(
+            f'<button class="button" type="button" data-action="use-modal-period" data-value="{input_number(first_y[1]["period"])}">'
+            f"Usar T<sub>Y</sub> = {format_number(first_y[1]['period'], 3)} s en el metrado</button>"
+        )
+
+    container.innerHTML = f"""
+      <div class="analysis-summary modal-summary">{summary}</div>
+      <p class="modal-check {'is-ok' if check_ok else 'is-warn'}">{escape(check_text)}</p>
+      <div class="modal-layout">
+        <div class="modal-shape">
+          {_mode_shape_svg(selected_mode, levels)}
+          <p class="modal-legend"><span><i style="background:var(--teal)"></i>φ<sub>x</sub></span><span><i style="background:var(--amber)"></i>φ<sub>y</sub></span></p>
+        </div>
+        <div>
+          <p class="matrix-caption">Modo {analysis_modal_mode + 1}: T = {format_number(selected_mode['period'], 4)} s · f = {format_number(selected_mode['frequency'], 3)} Hz · ω = {format_number(selected_mode['omega'], 3)} rad/s. Forma normalizada con la mayor traslación = 1.</p>
+          <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>φ<sub>x</sub></th><th>φ<sub>y</sub></th><th>φ<sub>θ</sub> (rad/m)</th></tr></thead><tbody>{''.join(shape_rows)}</tbody></table></div>
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Modo</th><th>T (s)</th><th>f (Hz)</th><th>ω (rad/s)</th><th>Tipo</th><th>Γ<sub>x</sub></th><th>Γ<sub>y</sub></th><th>%M<sub>x</sub></th><th>%M<sub>y</sub></th><th>%M<sub>θ</sub></th><th>Σ%M<sub>x</sub></th><th>Σ%M<sub>y</sub></th><th>Σ%M<sub>θ</sub></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+      <p class="matrix-caption" style="margin-top:12px">Masas por diafragma (del Metrado): m = P/g y J = m(a² + b²)/12 con las dimensiones de planta de cada nivel.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Nivel</th><th>P (kN)</th><th>m (t)</th><th>J (t·m²)</th><th>x<sub>CM</sub> (m)</th><th>y<sub>CM</sub> (m)</th></tr></thead><tbody>{''.join(mass_rows)}</tbody></table></div>
+      <div class="modal-actions">{''.join(buttons)}</div>
+    """
+
+
+def _flexibility_modal_steps_html(result: dict, modal: dict | None, masses: list | None) -> str:
+    levels = result["levels"]
+    dof_labels: list[str] = []
+    for level in range(levels):
+        dof_labels.extend((f"Ux{level + 1}", f"Uy{level + 1}", f"Rz{level + 1}"))
+    try:
+        flexibility = invert_matrix(result["global_matrix"])
+    except ValueError:
+        return ""
+    check = [sum(f * p for f, p in zip(row, result["force_vector"])) for row in flexibility]
+    error = max(abs(a - b) for a, b in zip(check, result["displacement_vector"]))
+    step8 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">8</span>Matriz de flexibilidad [F] = [K<sub>P3D</sub>]<sup>−1</sup></h4>
+        <p>Cada columna j de [F] es el desplazamiento de todos los GDL ante una carga unitaria en el GDL j (m/kN y rad/kN·m). Comprobación: {{U}} = [F]{{P}} reproduce la solución con un error máximo de {_compact_number(error)}.</p>
+        {_matrix_table(flexibility, dof_labels)}
+      </div>
+    """
+    if modal is None:
+        return step8
+    modes = modal["modes"]
+    eigen_rows = "".join(
+        f"<tr><td>{index + 1}</td><td>{_compact_number(mode['omega'] ** 2)}</td><td>{format_number(mode['omega'], 4)}</td>"
+        f"<td>{format_number(mode['frequency'], 4)}</td><td>{format_number(mode['period'], 4)}</td></tr>"
+        for index, mode in enumerate(modes)
+    )
+    step9 = f"""
+      <div class="step-block">
+        <h4><span class="step-badge">9</span>Matriz de masas [M] y problema de valores propios</h4>
+        <p>Por nivel: m en Ux y Uy, y J<sub>O</sub> = J<sub>CM</sub> + m(dx² + dy²) en Rz, con acoples −m·dy y m·dx cuando el CM del metrado no coincide con el punto de referencia ({format_number(analysis_cm_x, 3)} ; {format_number(analysis_cm_y, 3)}) m.</p>
+        {_matrix_table(modal['mass_matrix'], dof_labels)}
+        <p>Se resuelve <code>([K] − ω²[M]){{φ}} = 0</code> (Cholesky de [M] + método de Jacobi). Luego T = 2π/ω y f = ω/2π.</p>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Modo</th><th>ω² (1/s²)</th><th>ω (rad/s)</th><th>f (Hz)</th><th>T (s)</th></tr></thead><tbody>{eigen_rows}</tbody></table></div>
+        <p>Factor de participación <code>Γ = φᵀ[M]{{r}} / φᵀ[M]φ</code> y masa efectiva <code>M* = (φᵀ[M]{{r}})² / φᵀ[M]φ</code>, con {{r}} el vector de influencia de cada dirección.</p>
+      </div>
+    """
+    return step8 + step9
 
 
 def render_analysis_results() -> None:
@@ -2410,14 +2663,20 @@ def render_analysis_results() -> None:
             )
     by_id("analysis-frames").innerHTML = f"""
       <h3>Distribución de acciones por eje</h3>
-      <p>El cortante de cada eje se reparte entre sus columnas iguales. El momento Vh/2 solo se muestra para uniones empotrada–rígida.</p>
+      <p>El cortante de cada eje se reparte entre sus columnas iguales. Momento de extremo: Vh/2 con ambos extremos empotrados y Vh en el extremo fijo cuando el otro está articulado.</p>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>Eje</th><th>Nivel</th><th>r (m)</th><th>V eje (kN)</th><th>V/col (kN)</th><th>M extremo (kN·m)</th></tr></thead><tbody>{''.join(frame_rows)}</tbody></table></div>
     """
 
-    _update_details_panel("analysis-steps", ".steps-card", _analysis_steps_html(result))
+    modal, masses, modal_error = _compute_modal(result)
+    _update_details_panel(
+        "analysis-steps",
+        ".steps-card",
+        _analysis_steps_html(result) + _flexibility_modal_steps_html(result, modal, masses),
+    )
 
     render_deformation_views(result)
     render_action_charts(result)
+    render_modal_results(result, modal, masses, modal_error)
 
 
 def load_level_card(level: LevelLoad, index: int) -> str:
@@ -3085,7 +3344,10 @@ def apply_loads_to_analysis() -> None:
         site = _build_site_params(assessment)
         column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
         result = static_seismic_forces(load_levels, site, column_weights)
-    except (ValueError, ZeroDivisionError):
+    except (ValueError, ZeroDivisionError) as error:
+        warning = by_id("loads-warning")
+        warning.hidden = False
+        warning.textContent = f"No se pudo aplicar al análisis: {error}"
         return
     count = min(len(load_levels), 12)
     analysis_level_count = count
@@ -3115,6 +3377,18 @@ def apply_loads_to_analysis() -> None:
     render_analysis_inputs()
     render_analysis_results()
     set_stage("analysis")
+
+
+def use_modal_period(period: float) -> None:
+    """Lleva el periodo del análisis modal al metrado (T manual) y recalcula."""
+    global loads_period_mode, loads_period_manual
+    if not isfinite(period) or period <= 0:
+        return
+    loads_period_mode = "manual"
+    loads_period_manual = round(period, 4)
+    render_loads_site_inputs()
+    render_loads_results()
+    set_stage("loads")
 
 
 STAGE_INTRO = {
@@ -3493,6 +3767,8 @@ def handle_click(event):
             configure_building_levels(len(load_levels))
     elif action == "apply-loads":
         apply_loads_to_analysis()
+    elif action == "use-modal-period":
+        use_modal_period(parse_number(action_element.getAttribute("data-value"), 0.0))
 
 
 @when("input", "#calculator")
@@ -3750,6 +4026,11 @@ def handle_change(event):
     if field == "rigidity-plan-level":
         rigidity_plan_level = max(0, min(int(parse_number(target.value)), len(load_levels) - 1))
         render_plan_diagram()
+        return
+    if field == "analysis-modal-mode":
+        global analysis_modal_mode
+        analysis_modal_mode = int(parse_number(target.value, 0.0))
+        render_analysis_results()
         return
     if field == "analysis-deform-level":
         global analysis_view_level
