@@ -19,6 +19,7 @@ MaterialType = Literal["concrete", "steel"]
 Direction = Literal["X", "Y"]
 
 MPA_TO_KGF_CM2 = 10.1971621298
+MAX_COLUMN_GROUPS = 20
 
 # Módulo elástico del acero: prácticamente constante en el rango elástico,
 # a diferencia del concreto (no depende de una resistencia ingresada por
@@ -200,8 +201,8 @@ def calculate_story(
     story_height_m: float,
     units: UnitSystem,
 ) -> dict[str, object]:
-    if not 1 <= len(groups) <= 8:
-        raise ValueError("Debe existir entre 1 y 8 grupos de columnas.")
+    if not 1 <= len(groups) <= MAX_COLUMN_GROUPS:
+        raise ValueError(f"Debe existir entre 1 y {MAX_COLUMN_GROUPS} grupos de columnas.")
     results = [calculate_group(group, story_height_m, units) for group in groups]
     totals_by_direction: dict[Direction, float] = {"X": 0.0, "Y": 0.0}
     for group, result in zip(groups, results):

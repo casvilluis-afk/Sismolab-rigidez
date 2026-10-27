@@ -192,7 +192,7 @@ select { padding: 8px 10px; }
 .add-group { width: 100%; min-height: 44px; display: flex; align-items: center; margin-top: 14px; color: var(--teal-dark); background: rgba(255,255,255,.7); border: 1px dashed #9bb4b1; }
 .add-group > span { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
-.result-panel { display: grid; gap: 14px; }
+.result-panel { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
 .result-card { padding: 24px; color: white; background: var(--ink); border-radius: 14px; box-shadow: 0 14px 34px rgba(18,44,51,.15); }
 .result-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .result-kicker { color: #66cbd0; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
