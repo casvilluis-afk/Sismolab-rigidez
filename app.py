@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
-from math import cos, hypot, isfinite, pi, radians, sin
+from math import cos, hypot, isfinite, pi, radians, sin, sqrt
 
 from pyscript import document, when
 
 import dd_project as dd
+import spectra as spectra_module
 import loads as loads_module
 
 from stiffness import (
@@ -87,6 +88,20 @@ units = "SI"
 story_height = 3.0
 next_group_number = 2
 current_stage = "rigidity"
+spec_text = ""
+spec_dt = 0.01
+spec_units = "g"
+spec_scale = 1.0
+spec_xi = 5.0
+spec_method = "todos"
+spec_axis = "PSa"
+spec_results: dict = {}
+spec_record = None
+spec_note = ""
+spec_error = ""
+spectral_source = "e030"
+spectral_combination = "cqc"
+modal_periods_cache: list = []
 analysis_level_count = 2
 analysis_heights = [3.0, 3.0]
 analysis_forces = [100.0, 200.0]
@@ -1959,7 +1974,7 @@ def activate_dd(group_number: int) -> None:
     site = dd.DD_SITES[group_number]
     keep = {} if first_activation else {
         key: getattr(dd_params, key)
-        for key in ("column_bx", "column_by", "beam_b", "beam_h", "slab_floor", "slab_roof", "E_tcm2", "gamma_tm3", "finishes", "partitions")
+        for key in ("column_bx", "column_by", "beam_b", "beam_h", "slab_floor", "slab_roof", "E_tcm2", "gamma_tm3", "finishes", "partitions", "stiffness_model")
     }
     dd_params = dd.DDParams.from_group(group_number, **keep)
     dd_active = True
@@ -2009,6 +2024,8 @@ def render_dd_panel() -> None:
     by_id("dd-group").value = str(dd_params.group) if dd_active else "libre"
     by_id("dd-use").value = loads_use_preset
     by_id("dd-fields").hidden = not dd_active
+    by_id("dd-model-field").hidden = not dd_active
+    by_id("dd-stiffness-model").value = dd_params.stiffness_model
     by_id("dd-frames-panel").hidden = not dd_active
     for element_id in ("manual-columns", "manual-beams", "manual-slabs"):
         by_id(element_id).hidden = dd_active
@@ -2035,18 +2052,34 @@ def render_dd_panel() -> None:
     else:
         message.hidden = True
     rows = []
+    rigid_model = dd_params.stiffness_model == "rigid"
     for data in dd_frames:
         frame = data["frame"]
-        k_values = " · ".join(_compact_number(value) for value in data["story_stiffness"])
+        k_values = " · ".join(format_number(value / KN_PER_TONF, 1) for value in data["story_stiffness"])
+        other = " · ".join(format_number(value / KN_PER_TONF, 1) for value in data["other_story_stiffness"])
         rows.append(
             f"<tr><td>{escape(frame.label)}</td><td>{format_number(frame.beta, 2)}°</td>"
             f"<td>{format_number(frame.x0, 2)}</td><td>{format_number(frame.y0, 2)}</td>"
-            f"<td>{' / '.join(str(value) for value in data['columns'])}</td><td>{k_values}</td></tr>"
+            f"<td>{' / '.join(str(value) for value in data['columns'])}</td><td>{k_values}</td>"
+            f"<td class=\"dd-other\">{other}</td><td>{format_number(data['rho'], 2)}</td></tr>"
+        )
+    chosen = "vigas rígidas" if rigid_model else "vigas flexibles"
+    other_name = "vigas flexibles" if rigid_model else "vigas rígidas"
+    rho_values = [float(data["rho"]) for data in dd_frames if data["rho"] > 0]
+    rho_note = ""
+    if rho_values:
+        rho_min = min(rho_values)
+        rho_note = (
+            f'<p class="field-help" style="margin-top:10px">ρ = (I<sub>viga</sub>/L)/(I<sub>col</sub>/h). '
+            f"Con ρ mínimo de {format_number(rho_min, 2)}, "
+            + ("las vigas son más flexibles que las columnas: la hipótesis de vigas rígidas sobreestima la rigidez. Decláralo en la memoria y verifica con el modelo de vigas flexibles."
+               if rho_min < 3 else "las vigas son bastante más rígidas que las columnas; la hipótesis de vigas rígidas es razonable.")
+            + "</p>"
         )
     by_id("dd-frame-table").innerHTML = (
         '<div class="table-scroll"><table class="data-table"><thead><tr><th>Pórtico</th><th>β</th><th>x₀ (m)</th>'
-        '<th>y₀ (m)</th><th>Columnas por piso</th><th>K equivalente por piso (kN/m)</th></tr></thead>'
-        f"<tbody>{''.join(rows)}</tbody></table></div>"
+        f'<th>y₀ (m)</th><th>Columnas por piso</th><th>K por piso, {chosen} (t/m)</th><th>K con {other_name} (t/m)</th><th>ρ</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>{rho_note}"
     )
 
 
@@ -2267,6 +2300,20 @@ def _dd_iso_svg() -> str:
     )
 
 
+def _dd_model_caption(data: dict) -> str:
+    if data.get("model") == "rigid":
+        clear = " · ".join(format_number(value, 2) for value in data.get("clear_heights", []))
+        return (
+            "Vigas infinitamente rígidas: cada columna se empotra en las caras de las vigas, "
+            f"k = 12EI/h<sub>libre</sub>³ con h<sub>libre</sub> = h − h<sub>viga</sub> = {clear} m. "
+            "Matriz tridiagonal de corte (kN/m)."
+        )
+    return (
+        "Matriz lateral condensada K<sub>L</sub> = K<sub>uu</sub> − K<sub>uθ</sub>K<sub>θθ</sub><sup>−1</sup>K<sub>θu</sub> (kN/m). "
+        "Columnas y vigas a flexión, sin deformación axial, base empotrada."
+    )
+
+
 def _dd_frame_step(data: dict, index: int) -> str:
     frame = data["frame"]
     levels = len(data["matrix"])
@@ -2278,10 +2325,10 @@ def _dd_frame_step(data: dict, index: int) -> str:
     )
     return f"""
     <details class="step-detail">
-      <summary><span>P{index + 1}</span><div><strong>{escape(frame.label)} · β = {format_number(frame.beta, 2)}°</strong><small>{' / '.join(str(v) for v in data['columns'])} columnas por piso · {data['dofs']} grados de libertad antes de condensar</small></div><b>›</b></summary>
+      <summary><span>P{index + 1}</span><div><strong>{escape(frame.label)} · β = {format_number(frame.beta, 2)}°</strong><small>{' / '.join(str(v) for v in data['columns'])} columnas por piso · {"vigas rígidas" if data.get("model") == "rigid" else f"{data['dofs']} grados de libertad antes de condensar"}</small></div><b>›</b></summary>
       <div class="step-content step-content--wide">
         <div>
-          <p class="matrix-caption">Matriz lateral condensada K<sub>L</sub> = K<sub>uu</sub> − K<sub>uθ</sub>K<sub>θθ</sub><sup>−1</sup>K<sub>θu</sub> (kN/m). Columnas y vigas a flexión, sin deformación axial, base empotrada.</p>
+          <p class="matrix-caption">{_dd_model_caption(data)}</p>
           {_matrix_table(data['matrix'], labels)}
           <p class="matrix-caption" style="margin-top:10px">Rigidez de entrepiso equivalente: cortante de piso entre desplazamiento relativo, con una fuerza unitaria en cada nivel.</p>
           <div class="table-scroll"><table class="data-table"><thead><tr><th>Piso</th><th>Columnas</th><th>h (m)</th><th>K (kN/m)</th><th>K (t/m)</th></tr></thead><tbody>{k_rows}</tbody></table></div>
@@ -3428,7 +3475,10 @@ def render_analysis_results() -> None:
             },
         )
     except ValueError as error:
+        global modal_periods_cache
+        modal_periods_cache = []
         _clear_analysis_results(str(error))
+        by_id("analysis-spectral").innerHTML = '<p class="matrix-caption">Disponible cuando el modelo tenga estabilidad global y modos de vibración.</p>'
         return
 
     warning = by_id("analysis-warning")
@@ -3495,6 +3545,8 @@ def render_analysis_results() -> None:
     render_deformation_views(result)
     render_action_charts(result)
     render_modal_results(result, modal, masses, modal_error)
+    modal_periods_cache = [(f"T{index + 1}", mode["period"]) for index, mode in enumerate(modal["modes"])] if modal else []
+    render_spectral_analysis(result, modal, masses)
 
 
 def load_level_card(level: LevelLoad, index: int) -> str:
@@ -4179,10 +4231,396 @@ def use_modal_period(period: float) -> None:
     set_stage("loads")
 
 
+# ---------------------------------------------------------------------------
+# Etapa 4: espectros de respuesta de un registro y espectro E.030
+# ---------------------------------------------------------------------------
+
+SPEC_SERIES_CLASS = {
+    "analitico": "spec-line-analitico",
+    "newmark_promedio": "spec-line-promedio",
+    "newmark_lineal": "spec-line-lineal",
+}
+SPEC_SHORT = {
+    "analitico": "Analítico",
+    "newmark_promedio": "Newmark promedio",
+    "newmark_lineal": "Newmark lineal",
+}
+
+
+def _spec_record_values() -> tuple[float, list[float]] | None:
+    """Registro en m/s² ya escalado, o None si no hay uno válido."""
+    global spec_note, spec_error
+    if not spec_text.strip():
+        spec_note, spec_error = "", ""
+        return None
+    try:
+        dt, raw, note = spectra_module.parse_record(spec_text, spec_dt if spec_dt > 0 else None)
+    except ValueError as error:
+        spec_note, spec_error = "", str(error)
+        return None
+    if len(raw) < 4:
+        spec_note, spec_error = "", "El registro necesita al menos cuatro muestras."
+        return None
+    factor = spectra_module.UNIT_FACTORS.get(spec_units, spectra_module.G) * spec_scale
+    spec_error = ""
+    spec_note = f"{note} {len(raw)} muestras · duración {format_number(dt * (len(raw) - 1), 2)} s."
+    return dt, [value * factor for value in raw]
+
+
+def _spec_site() -> dict[str, float] | None:
+    """Parámetros Z, U, S, TP, TL y R del metrado actual."""
+    try:
+        assessment = _current_irregularity_assessment()
+        site = _build_site_params(assessment)
+        column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
+        result = static_seismic_forces(load_levels, site, column_weights)
+    except (ValueError, ZeroDivisionError):
+        return None
+    regular = float(assessment["ia"]) == 1.0 and float(assessment["ip"]) == 1.0
+    return {
+        "z": result.z, "u": result.u, "s": result.s, "tp": result.tp, "tl": result.tl, "r": result.r,
+        "V": result.base_shear, "regular": regular, "W": result.weight_total,
+    }
+
+
+def compute_spectra() -> None:
+    global spec_results, spec_record
+    record = _spec_record_values()
+    spec_results = {}
+    spec_record = record
+    if record is None:
+        render_spectra()
+        return
+    dt, acc = record
+    methods = list(spectra_module.METHODS) if spec_method == "todos" else [spec_method]
+    periods = spectra_module.default_periods()
+    try:
+        for method in methods:
+            spec_results[method] = spectra_module.response_spectrum(acc, dt, periods, spec_xi / 100.0, method)
+    except ValueError as error:
+        global spec_error
+        spec_error = str(error)
+    render_spectra()
+    if current_stage == "analysis" or spectral_source == "record":
+        render_analysis_results()
+
+
+def load_spectra_example() -> None:
+    """Registro sintético (ruido filtrado con envolvente), solo para probar la herramienta."""
+    global spec_text, spec_units, spec_dt
+    dt = 0.01
+    values = []
+    state_a = state_b = 0.0
+    seed = 12345
+    for index in range(3000):
+        seed = (1103515245 * seed + 12345) % 2147483648
+        noise = seed / 2147483648.0 - 0.5
+        state_a = 0.92 * state_a + noise
+        state_b = 0.80 * state_b + 0.35 * state_a
+        t = index * dt
+        envelope = (t / 4.0) ** 2 if t < 4.0 else (1.0 if t < 14.0 else max(0.0, 1.0 - (t - 14.0) / 16.0))
+        values.append(0.06 * state_b * envelope)
+    spec_text = "\n".join(f"{index * dt:.2f} {value:.6f}" for index, value in enumerate(values))
+    spec_units = "g"
+    spec_dt = dt
+    by_id("spec-record").value = spec_text
+    by_id("spec-units").value = spec_units
+    by_id("spec-dt").value = "0.01"
+    by_id("spec-file-name").textContent = "registro sintético de prueba (no es un sismo real)"
+    compute_spectra()
+
+
+def _axis_ticks(maximum: float, count: int = 5) -> list[float]:
+    if maximum <= 0:
+        return [0.0]
+    raw = maximum / count
+    magnitude = 10 ** int(f"{raw:e}".split("e")[1])
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    ticks, value = [], 0.0
+    while value <= maximum * 1.0001:
+        ticks.append(value)
+        value += step
+    return ticks
+
+
+def _line_chart_svg(series: list[tuple[str, str, list[tuple[float, float]]]], x_label: str, y_label: str,
+                    x_max: float | None = None, markers: list[tuple[float, str]] | None = None, height: int = 300) -> str:
+    """Gráfico de líneas con ejes y marcas (series: etiqueta, clase CSS, puntos)."""
+    points_all = [p for _label, _css, points in series for p in points]
+    if not points_all:
+        return '<p class="matrix-caption">Sin datos para graficar.</p>'
+    x_hi = x_max if x_max else max(p[0] for p in points_all)
+    y_lo = min(0.0, min(p[1] for p in points_all))
+    y_hi = max(p[1] for p in points_all)
+    if y_hi - y_lo <= 0:
+        y_hi = y_lo + 1.0
+    width, left, right, top, bottom = 640, 56, 16, 14, 40
+    plot_w, plot_h = width - left - right, height - top - bottom
+
+    def sx(x):
+        return left + x / x_hi * plot_w
+
+    def sy(y):
+        return top + (y_hi - y) / (y_hi - y_lo) * plot_h
+
+    parts = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(y_label)} versus {escape(x_label)}">']
+    y_ticks = _axis_ticks(y_hi)
+    if y_lo < 0:
+        y_ticks = [-t for t in reversed(_axis_ticks(-y_lo)) if t > 0] + y_ticks
+    for tick in y_ticks:
+        if tick < y_lo - 1e-12 or tick > y_hi * 1.0001:
+            continue
+        y = sy(tick)
+        parts.append(f'<line class="spec-grid" x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}"/>')
+        parts.append(f'<text class="spec-tick" x="{left - 6}" y="{y + 4:.1f}" text-anchor="end">{format_number(tick, 3)}</text>')
+    for tick in _axis_ticks(x_hi, 8):
+        x = sx(tick)
+        parts.append(f'<line class="spec-grid" x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{top + plot_h}"/>')
+        parts.append(f'<text class="spec-tick" x="{x:.1f}" y="{top + plot_h + 16}" text-anchor="middle">{format_number(tick, 2)}</text>')
+    if y_lo < 0:
+        parts.append(f'<line class="spec-axis" x1="{left}" y1="{sy(0):.1f}" x2="{width - right}" y2="{sy(0):.1f}"/>')
+    parts.append(f'<line class="spec-axis" x1="{left}" y1="{top + plot_h}" x2="{width - right}" y2="{top + plot_h}"/>')
+    parts.append(f'<line class="spec-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}"/>')
+    for order, (x_value, label) in enumerate(markers or []):
+        if 0 < x_value <= x_hi:
+            x = sx(x_value)
+            parts.append(f'<line class="spec-marker" x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{top + plot_h}"/>')
+            parts.append(f'<text class="spec-marker-label" x="{x + 4:.1f}" y="{top + 12 + 13 * order}">{escape(label)}</text>')
+    for _label, css, points in series:
+        visible = [(x, y) for x, y in points if x <= x_hi * 1.0001]
+        if len(visible) < 2:
+            continue
+        path = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in visible)
+        parts.append(f'<polyline class="{css}" points="{path}"/>')
+    parts.append(f'<text class="spec-axis-label" x="{left + plot_w / 2:.1f}" y="{height - 4}" text-anchor="middle">{escape(x_label)}</text>')
+    parts.append(f'<text class="spec-axis-label" x="12" y="{top + plot_h / 2:.1f}" text-anchor="middle" transform="rotate(-90 12 {top + plot_h / 2:.1f})">{escape(y_label)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+SPEC_AXIS = {
+    "PSa": ("PSa (g)", 1.0 / spectra_module.G),
+    "Sa": ("Sa (g)", 1.0 / spectra_module.G),
+    "Sd": ("Sd (cm)", 100.0),
+    "Sv": ("Sv (cm/s)", 100.0),
+    "PSv": ("PSv (cm/s)", 100.0),
+}
+
+
+def render_spectra() -> None:
+    record = spec_record
+    site = _spec_site()
+    by_id("spec-record-note").textContent = spec_note
+    warning = by_id("spec-warning")
+    warning.hidden = not spec_error
+    warning.textContent = spec_error
+    periods = spectra_module.default_periods()
+    label, factor = SPEC_AXIS.get(spec_axis, SPEC_AXIS["PSa"])
+    series = []
+    legend = []
+    for method, rows in spec_results.items():
+        points = [(row["T"], row[spec_axis] * factor) for row in rows]
+        series.append((SPEC_SHORT[method], SPEC_SERIES_CLASS[method], points))
+        legend.append(f'<span class="iso-legend-item"><i class="spec-key {SPEC_SERIES_CLASS[method]}"></i>{SPEC_SHORT[method]}</span>')
+    if site is not None and spec_axis in ("PSa", "Sa", "Sd"):
+        elastic = spectra_module.e030_spectrum(periods, site["z"], site["u"], site["s"], site["tp"], site["tl"], 1.0)
+        design = spectra_module.e030_spectrum(periods, site["z"], site["u"], site["s"], site["tp"], site["tl"], site["r"])
+        if spec_axis == "Sd":
+            convert = lambda rows: [(row["T"], row["PSa"] / (2 * pi / row["T"]) ** 2 * 100.0) for row in rows]
+        else:
+            convert = lambda rows: [(row["T"], row["PSa"] / spectra_module.G) for row in rows]
+        series.append(("E.030 elástico", "spec-line-e030", convert(elastic)))
+        series.append(("E.030 de diseño", "spec-line-e030-design", convert(design)))
+        legend.append('<span class="iso-legend-item"><i class="spec-key spec-line-e030"></i>E.030 elástico (R = 1)</span>')
+        legend.append(f'<span class="iso-legend-item"><i class="spec-key spec-line-e030-design"></i>E.030 de diseño (R = {format_number(site["r"], 2)})</span>')
+    markers = []
+    if modal_periods_cache:
+        for name, period in modal_periods_cache[:3]:
+            markers.append((period, name))
+    by_id("spec-chart").innerHTML = _line_chart_svg(series, "Periodo T (s)", label, 4.0, markers)
+    by_id("spec-legend").innerHTML = "".join(legend)
+
+    if record is not None:
+        dt, acc = record
+        step = max(1, len(acc) // 1500)
+        points = [(index * dt, acc[index] / spectra_module.G) for index in range(0, len(acc), step)]
+        pga = max(abs(value) for value in acc) / spectra_module.G
+        by_id("spec-record-chart").innerHTML = _line_chart_svg([("ü_g", "spec-line-record", points)], "Tiempo (s)", "ü_g (g)", dt * (len(acc) - 1), None, 220)
+        by_id("spec-record-caption").textContent = f"PGA = {format_number(pga, 4)} g · Δt = {format_number(dt, 4)} s"
+    else:
+        by_id("spec-record-chart").innerHTML = '<p class="matrix-caption spec-empty">Sin registro cargado.</p>'
+        by_id("spec-record-caption").textContent = ""
+
+    metrics = []
+    if record is not None:
+        dt, acc = record
+        pga = max(abs(value) for value in acc) / spectra_module.G
+        metrics.append(("PGA", format_number(pga, 4), "g"))
+        metrics.append(("Duración", format_number(dt * (len(acc) - 1), 2), f"s · {len(acc)} muestras"))
+    for method, rows in list(spec_results.items())[:1]:
+        peak = max(rows, key=lambda row: row["PSa"])
+        metrics.append(("PSa máxima", format_number(peak["PSa"] / spectra_module.G, 3), f"g en T = {format_number(peak['T'], 2)} s"))
+    if site is not None:
+        metrics.append(("Meseta E.030", format_number(site["z"] * site["u"] * 2.5 * site["s"], 3), f"g · ZUCS con C = 2,5, TP = {format_number(site['tp'], 2)} s"))
+    if metrics:
+        by_id("spec-summary").innerHTML = "".join(
+            f'<div class="analysis-metric"><span>{name}</span><strong>{value}</strong><small>{unit}</small></div>'
+            for name, value, unit in metrics
+        )
+    if spec_results:
+        methods = list(spec_results)
+        head = "".join(f"<th>PSa {SPEC_SHORT[m]} (g)</th>" for m in methods)
+        first = spec_results[methods[0]]
+        rows_html = []
+        for index, row in enumerate(first):
+            if row["T"] > 2.0 and index % 2:
+                continue
+            cells = "".join(f"<td>{format_number(spec_results[m][index]['PSa'] / spectra_module.G, 4)}</td>" for m in methods)
+            rows_html.append(
+                f"<tr><td>{format_number(row['T'], 2)}</td><td>{format_number(row['Sd'] * 100, 3)}</td>"
+                f"<td>{format_number(row['Sv'] * 100, 2)}</td><td>{format_number(row['Sa'] / spectra_module.G, 4)}</td>{cells}</tr>"
+            )
+        by_id("spec-table").innerHTML = (
+            f"<h3>Ordenadas espectrales</h3><p>Sd, Sv y Sa con el método {SPEC_SHORT[methods[0]].lower()}; ξ = {format_number(spec_xi, 1)} %.</p>"
+            '<div class="table-scroll spec-table-scroll"><table class="data-table"><thead><tr><th>T (s)</th><th>Sd (cm)</th><th>Sv (cm/s)</th><th>Sa (g)</th>'
+            f"{head}</tr></thead><tbody>{''.join(rows_html)}</tbody></table></div>"
+        )
+    else:
+        by_id("spec-table").innerHTML = '<h3>Ordenadas espectrales</h3><p>Calcula los espectros para ver la tabla.</p>'
+
+
+# ---------------------------------------------------------------------------
+# Análisis modal espectral (E.030, art. 29)
+# ---------------------------------------------------------------------------
+
+def _cqc_rho(omega_i: float, omega_j: float, xi: float) -> float:
+    beta = omega_j / omega_i
+    numerator = 8 * xi * xi * (1 + beta) * beta ** 1.5
+    denominator = (1 - beta * beta) ** 2 + 4 * xi * xi * beta * (1 + beta) ** 2
+    return numerator / denominator if denominator > 0 else 1.0
+
+
+def _combine(values: list[float], omegas: list[float], method: str, xi: float = 0.05) -> float:
+    if method == "cqc":
+        total = 0.0
+        for i, ri in enumerate(values):
+            for j, rj in enumerate(values):
+                total += _cqc_rho(omegas[i], omegas[j], xi) * ri * rj
+        return sqrt(max(total, 0.0))
+    return 0.25 * sum(abs(v) for v in values) + 0.75 * sqrt(sum(v * v for v in values))
+
+
+def _spectral_sa(period: float, site: dict[str, float]) -> float | None:
+    """Pseudoaceleración de diseño (m/s²) según la fuente elegida."""
+    if spectral_source == "record":
+        if not spec_results:
+            return None
+        rows = spec_results.get("analitico") or next(iter(spec_results.values()))
+        return spectra_module.interpolate(rows, period, "PSa") / site["r"]
+    row = spectra_module.e030_spectrum([period], site["z"], site["u"], site["s"], site["tp"], site["tl"], site["r"])[0]
+    return row["PSa"]
+
+
+def render_spectral_analysis(result: dict, modal: dict | None, masses: list | None) -> None:
+    container = by_id("analysis-spectral")
+    if modal is None or masses is None:
+        container.innerHTML = '<p class="matrix-caption">El análisis espectral usa los modos del análisis modal; completa el metrado para obtenerlos.</p>'
+        return
+    site = _spec_site()
+    if site is None:
+        container.innerHTML = '<p class="matrix-caption">Corrige el metrado (Etapa 2) para obtener Z, U, S, R y la cortante estática.</p>'
+        return
+    if spectral_source == "record" and not spec_results:
+        container.innerHTML = '<p class="matrix-caption">Carga un registro y calcula sus espectros en la etapa Espectros para usarlo aquí.</p>'
+        return
+    modes = modal["modes"]
+    mass_matrix = modal["mass_matrix"]
+    levels = result["levels"]
+    heights = analysis_heights[:levels]
+    amplification = (0.75 if site["regular"] else 0.85) * site["r"]
+    limit = 0.005 if loads_system == "albanileria" else 0.007
+    minimum_ratio = 0.80 if site["regular"] else 0.90
+    blocks = []
+    summary = []
+    for direction, offset, key in (("X", 0, "X"), ("Y", 1, "Y")):
+        omegas, base_shears, displacement_modes, drift_modes, shear_modes, mode_rows = [], [], [], [], [], []
+        for index, mode in enumerate(modes):
+            sa = _spectral_sa(mode["period"], site)
+            if sa is None:
+                return
+            gamma = mode["participation"][key]
+            factor = gamma * sa / mode["omega"] ** 2
+            q = [value * factor for value in mode["shape"]]
+            forces = [sum(mass_matrix[row][col] * q[col] for col in range(len(q))) * mode["omega"] ** 2 for row in range(len(q))]
+            disp = [q[3 * level + offset] for level in range(levels)]
+            drifts = [(disp[level] - (disp[level - 1] if level else 0.0)) / heights[level] for level in range(levels)]
+            shears = [sum(forces[3 * j + offset] for j in range(level, levels)) for level in range(levels)]
+            omegas.append(mode["omega"])
+            displacement_modes.append(disp)
+            drift_modes.append(drifts)
+            shear_modes.append(shears)
+            base_shears.append(shears[0])
+            mode_rows.append(
+                f"<tr><td>{index + 1}</td><td>{format_number(mode['period'], 4)}</td><td>{format_number(sa / spectra_module.G, 4)}</td>"
+                f"<td>{format_number(gamma, 3)}</td><td>{format_number(mode['mass_ratio'][key] * 100, 2)}</td><td>{format_number(shears[0], 1)}</td></tr>"
+            )
+        combine = lambda values: _combine(values, omegas, spectral_combination)
+        v_dyn = combine(base_shears)
+        v_min = minimum_ratio * site["V"]
+        scale = max(1.0, v_min / v_dyn) if v_dyn > 0 else 1.0
+        level_rows = []
+        worst = 0.0
+        for level in range(levels - 1, -1, -1):
+            u = combine([m[level] for m in displacement_modes])
+            drift = combine([m[level] for m in drift_modes])
+            shear = combine([m[level] for m in shear_modes])
+            inelastic = amplification * drift
+            worst = max(worst, inelastic)
+            verdict = "Cumple" if inelastic <= limit else "No cumple"
+            css = "is-regular" if inelastic <= limit else "is-irregular"
+            level_rows.append(
+                f"<tr><td>{escape(load_levels[level].label if level < len(load_levels) else f'Nivel {level + 1}')}</td>"
+                f"<td>{format_number(shear * scale, 1)}</td><td>{format_number(u * 1000, 2)}</td><td>{format_number(amplification * u * 1000, 2)}</td>"
+                f"<td>{format_number(drift * 1000, 3)}</td><td>{format_number(inelastic * 1000, 2)}</td><td class=\"irregularity-state {css}\">{verdict}</td></tr>"
+            )
+        summary.append(
+            f'<div class="analysis-metric"><span>Cortante dinámica V<sub>{direction}</sub></span><strong>{format_number(v_dyn, 1)}</strong>'
+            f'<small>kN · {format_number(100 * v_dyn / site["V"], 1)} % de la estática</small></div>'
+        )
+        summary.append(
+            f'<div class="analysis-metric"><span>Deriva máxima {direction}</span><strong>{format_number(worst * 1000, 2)}</strong>'
+            f'<small>‰ · límite {format_number(limit * 1000, 0)} ‰ · {"cumple" if worst <= limit else "no cumple"}</small></div>'
+        )
+        scale_text = (
+            f"V<sub>din</sub> = {format_number(v_dyn, 1)} kN es menor que {format_number(minimum_ratio * 100, 0)} % de V<sub>est</sub> = {format_number(site['V'], 1)} kN: "
+            f"las fuerzas se escalan por {format_number(scale, 3)} (los desplazamientos no se escalan)."
+            if scale > 1.0
+            else f"V<sub>din</sub> = {format_number(v_dyn, 1)} kN supera el {format_number(minimum_ratio * 100, 0)} % de V<sub>est</sub> = {format_number(site['V'], 1)} kN: no se escala."
+        )
+        blocks.append(
+            f"""
+            <h3 class="spectral-direction">Sismo en {direction}</h3>
+            <p class="matrix-caption">{scale_text}</p>
+            <div class="table-scroll"><table class="data-table"><thead><tr><th>Modo</th><th>T (s)</th><th>Sa (g)</th><th>Γ<sub>{direction.lower()}</sub></th><th>%M<sub>{direction.lower()}</sub></th><th>V basal (kN)</th></tr></thead><tbody>{''.join(mode_rows)}</tbody></table></div>
+            <div class="table-scroll" style="margin-top:10px"><table class="data-table"><thead><tr><th>Nivel</th><th>V piso (kN)</th><th>u elástico (mm)</th><th>u = {format_number(amplification, 2)}·u (mm)</th><th>Deriva elástica (‰)</th><th>Deriva inelástica (‰)</th><th>E.030</th></tr></thead><tbody>{''.join(level_rows)}</tbody></table></div>
+            """
+        )
+    source = "espectro E.030 de diseño" if spectral_source == "e030" else "espectro del registro cargado dividido entre R"
+    rule = "CQC con ξ = 5 %" if spectral_combination == "cqc" else "0,25Σ|r| + 0,75√Σr²"
+    container.innerHTML = (
+        f'<div class="analysis-summary modal-summary">{"".join(summary)}</div>'
+        f'<p class="matrix-caption">Sa(T<sub>n</sub>) del {source}; combinación {rule}; R = {format_number(site["r"], 2)}; '
+        f'desplazamientos inelásticos con {format_number(amplification, 2)} = {"0,75" if site["regular"] else "0,85"}·R (art. 50). '
+        "Las derivas se combinan modo a modo (no a partir de los desplazamientos combinados) y se evalúan en el centro de masa; con torsión, revisa también los bordes.</p>"
+        + "".join(blocks)
+    )
+
+
+
 STAGE_INTRO = {
     "rigidity": {
         "title": "SismoLab · Rigidez lateral",
-        "eyebrow": "Etapa 1 de 3",
+        "eyebrow": "Etapa 1 de 4",
         "heading": "Rigidez lateral del entrepiso",
         "copy": "Modela la planta con sus columnas, vigas y losas, y obtén la rigidez de cada eje con el procedimiento para comprobarla a mano.",
         "note_title": "Hipótesis",
@@ -4190,7 +4628,7 @@ STAGE_INTRO = {
     },
     "loads": {
         "title": "SismoLab · Metrado de cargas",
-        "eyebrow": "Etapa 2 de 3",
+        "eyebrow": "Etapa 2 de 4",
         "heading": "Metrado, centro de masa y fuerza sísmica",
         "copy": "Suma columnas, vigas, losa y cargas de uso para obtener el peso, el centro de masa y la fuerza estática de cada piso según la E.030.",
         "note_title": "Método",
@@ -4198,22 +4636,30 @@ STAGE_INTRO = {
     },
     "analysis": {
         "title": "SismoLab · Análisis estructural",
-        "eyebrow": "Etapa 3 de 3",
+        "eyebrow": "Etapa 3 de 4",
         "heading": "Análisis pseudotridimensional y modal",
         "copy": "Combina la rigidez de los ejes, su posición en planta y las fuerzas por nivel para obtener desplazamientos, giros, cortantes y modos de vibración.",
         "note_title": "Modelo",
         "note_copy": "Tres grados de libertad por diafragma y comportamiento elástico lineal.",
+    },
+    "spectra": {
+        "title": "SismoLab · Espectros de respuesta",
+        "eyebrow": "Etapa 4 de 4",
+        "heading": "Espectros de respuesta de un registro",
+        "copy": "Integra el oscilador de un grado de libertad con el método analítico y con Newmark para obtener Sd, Sv y Sa, y compáralos con el espectro de la E.030.",
+        "note_title": "Oscilador",
+        "note_copy": "ü + 2ξω·u̇ + ω²·u = −ü_g(t), con la excitación interpolada linealmente entre muestras.",
     },
 }
 
 
 def set_stage(stage: str) -> None:
     global current_stage
-    if stage not in ("rigidity", "loads", "analysis"):
+    if stage not in ("rigidity", "loads", "analysis", "spectra"):
         return
     current_stage = stage
 
-    stage_ids = {"rigidity": "rigidity-stage", "loads": "loads-stage", "analysis": "analysis-stage"}
+    stage_ids = {"rigidity": "rigidity-stage", "loads": "loads-stage", "analysis": "analysis-stage", "spectra": "spectra-stage"}
     buttons = {name: by_id(f"stage-{name}-button") for name in stage_ids}
     for name, element_id in stage_ids.items():
         by_id(element_id).hidden = name != stage
@@ -4240,6 +4686,8 @@ def set_stage(stage: str) -> None:
     elif stage == "analysis":
         render_analysis_inputs()
         render_analysis_results()
+    elif stage == "spectra":
+        render_spectra()
 
 
 def resize_analysis_levels(levels: int) -> None:
@@ -4557,6 +5005,10 @@ def handle_click(event):
         toggle_details_panel(str(action_element.getAttribute("data-target")))
     elif action == "stage":
         set_stage(str(action_element.getAttribute("data-value")))
+    elif action == "spec-compute":
+        compute_spectra()
+    elif action == "spec-example":
+        load_spectra_example()
     elif action == "load-analysis-example":
         load_analysis_example()
     elif action == "add":
@@ -4653,6 +5105,22 @@ def handle_input(event):
     if field is None:
         return
     field = str(field)
+    if field in ("spec-record", "spec-dt", "spec-scale", "spec-xi"):
+        global spec_text, spec_dt, spec_scale, spec_xi
+        if field == "spec-record":
+            spec_text = str(target.value)
+        elif field == "spec-dt":
+            spec_dt = max(0.0, parse_number(target.value, spec_dt))
+        elif field == "spec-scale":
+            spec_scale = max(0.0, parse_number(target.value, spec_scale))
+        else:
+            spec_xi = min(30.0, max(0.0, parse_number(target.value, spec_xi)))
+        _spec_record_values()
+        by_id("spec-record-note").textContent = spec_note
+        warning = by_id("spec-warning")
+        warning.hidden = not spec_error
+        warning.textContent = spec_error
+        return
     if field == "dd-param":
         key = str(target.getAttribute("data-key"))
         if key in DD_PARAM_FIELDS:
@@ -4986,6 +5454,32 @@ def handle_change(event):
         render_loads_site_inputs()
         render_loads_results()
         return
+    if field in ("spec-units", "spec-method", "spec-axis"):
+        global spec_units, spec_method, spec_axis
+        value = str(target.value)
+        if field == "spec-units" and value in spectra_module.UNIT_FACTORS:
+            spec_units = value
+        elif field == "spec-method" and (value == "todos" or value in spectra_module.METHODS):
+            spec_method = value
+        elif field == "spec-axis" and value in SPEC_AXIS:
+            spec_axis = value
+            render_spectra()
+        return
+    if field in ("spectral-source", "spectral-combination"):
+        global spectral_source, spectral_combination
+        value = str(target.value)
+        if field == "spectral-source" and value in ("e030", "record"):
+            spectral_source = value
+        elif field == "spectral-combination" and value in ("cqc", "abs_srss"):
+            spectral_combination = value
+        render_analysis_results()
+        return
+    if field == "dd-stiffness-model":
+        value = str(target.value)
+        if value in ("rigid", "flexible"):
+            dd_params.stiffness_model = value
+            dd_rebuild()
+        return
     if field == "dd-group":
         value = str(target.value)
         if value == "libre":
@@ -5055,6 +5549,7 @@ def initialize() -> None:
     render_loads_results()
     render_analysis_inputs()
     render_analysis_results()
+    render_spectra()
     by_id("calculator").setAttribute("aria-busy", "false")
 
 

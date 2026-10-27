@@ -37,6 +37,10 @@
             <button id="stage-analysis-button" class="stage-tab" type="button" data-action="stage" data-value="analysis">
               <span class="bubble" aria-hidden="true">3</span><span class="stage-tab__text"><strong>Análisis</strong><small>Respuesta y modos</small></span>
             </button>
+            <span class="stage-connector" aria-hidden="true"></span>
+            <button id="stage-spectra-button" class="stage-tab" type="button" data-action="stage" data-value="spectra">
+              <span class="bubble" aria-hidden="true">4</span><span class="stage-tab__text"><strong>Espectros</strong><small>Registro y E.030</small></span>
+            </button>
           </nav>
 
           <div class="header-actions">
@@ -91,6 +95,13 @@
                       <option value="otro">Otro · editable por nivel</option>
                     </select>
                   </div>
+                </div>
+                <div id="dd-model-field" class="field-block dd-model-field" hidden>
+                  <label for="dd-stiffness-model">Modelo de rigidez de los pórticos</label>
+                  <select id="dd-stiffness-model" data-field="dd-stiffness-model">
+                    <option value="rigid" selected>Vigas infinitamente rígidas · altura libre h − h_viga</option>
+                    <option value="flexible">Pórtico con vigas flexibles · condensación estática</option>
+                  </select>
                 </div>
                 <p id="dd-site" class="field-help dd-site">Elige un grupo para cargar la planta, cotas, alturas, secciones y sitio de la Tabla 1.</p>
                 <div id="dd-fields" hidden>
@@ -222,7 +233,7 @@
             </div>
 
             <div id="dd-frames-panel" class="panel" hidden>
-              <div class="panel__head"><h2>Pórticos del proyecto</h2><span>matriz lateral con vigas flexibles</span></div>
+              <div class="panel__head"><h2>Pórticos del proyecto</h2><span>rigidez por pórtico y por piso</span></div>
               <div id="dd-frame-table" class="panel__body"></div>
             </div>
 
@@ -501,6 +512,25 @@
               <div id="analysis-modal" class="panel__body"></div>
             </div>
 
+            <div class="panel analysis-table-card spectral-card">
+              <div class="panel__head subheading--with-control">
+                <h2 id="analysis-spectral-heading">Análisis modal espectral</h2>
+                <div class="viz-control spectral-controls">
+                  <label for="spectral-source">Espectro</label>
+                  <select id="spectral-source" data-field="spectral-source">
+                    <option value="e030" selected>E.030 (ZUCS/R)</option>
+                    <option value="record">Registro cargado (÷R)</option>
+                  </select>
+                  <label for="spectral-combination">Combinación</label>
+                  <select id="spectral-combination" data-field="spectral-combination">
+                    <option value="cqc" selected>CQC</option>
+                    <option value="abs_srss">0,25Σ|r| + 0,75√Σr²</option>
+                  </select>
+                </div>
+              </div>
+              <div id="analysis-spectral" class="panel__body"></div>
+            </div>
+
             <div class="panel plan-pair">
               <div class="analysis-plan-card">
                 <div class="panel__head"><h2>Vista axonométrica deformada</h2></div>
@@ -563,8 +593,123 @@
         </section>
       </section>
 
+
+      <section id="spectra-stage" class="analysis-stage" hidden aria-labelledby="intro-title">
+        <div class="page-shell analysis-workspace">
+          <section class="analysis-input-panel" aria-label="Datos del registro">
+            <section class="panel" aria-labelledby="spec-record-heading">
+              <div class="panel__head"><h2 id="spec-record-heading">Registro sísmico</h2><span>aceleración del suelo</span></div>
+              <div class="panel__body">
+                <div class="spec-file-row">
+                  <label class="button spec-file-button" for="spec-file">Cargar archivo</label>
+                  <input id="spec-file" type="file" accept=".txt,.dat,.csv,.at2,.AT2,.acc" class="visually-hidden" />
+                  <span id="spec-file-name" class="field-help">.txt, .csv o PEER .AT2</span>
+                </div>
+                <div class="field-block">
+                  <label for="spec-record">O pega los datos</label>
+                  <textarea id="spec-record" data-field="spec-record" rows="7" spellcheck="false" placeholder="0.00  0.0012&#10;0.01  0.0031&#10;0.02 -0.0018&#10;…"></textarea>
+                  <small>Dos columnas (tiempo y aceleración), una columna de aceleraciones con Δt, o formato PEER con NPTS y DT en la cabecera.</small>
+                </div>
+                <div class="analysis-form-grid">
+                  <div class="field-block">
+                    <label for="spec-units">Unidades de aceleración</label>
+                    <select id="spec-units" data-field="spec-units">
+                      <option value="g" selected>g</option>
+                      <option value="m/s2">m/s²</option>
+                      <option value="gal">cm/s² (gal)</option>
+                    </select>
+                  </div>
+                  <div class="field-block">
+                    <label for="spec-dt">Δt (si no está en el archivo)</label>
+                    <div class="input-with-unit"><input id="spec-dt" type="number" min="0.0001" step="0.001" value="0.01" data-field="spec-dt" /><span>s</span></div>
+                  </div>
+                  <div class="field-block">
+                    <label for="spec-scale">Factor de escala</label>
+                    <input id="spec-scale" type="number" min="0" step="0.05" value="1" data-field="spec-scale" />
+                  </div>
+                  <div class="field-block">
+                    <label for="spec-xi">Amortiguamiento ξ</label>
+                    <div class="input-with-unit"><input id="spec-xi" type="number" min="0" max="30" step="0.5" value="5" data-field="spec-xi" /><span>%</span></div>
+                  </div>
+                </div>
+                <p id="spec-record-note" class="field-help spec-record-note"></p>
+                <button class="button button-ghost spec-example" type="button" data-action="spec-example">Cargar registro sintético de prueba</button>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="spec-method-heading">
+              <div class="panel__head"><h2 id="spec-method-heading">Método de cálculo</h2></div>
+              <div class="panel__body">
+                <div class="field-block">
+                  <label for="spec-method">Método</label>
+                  <select id="spec-method" data-field="spec-method">
+                    <option value="todos" selected>Comparar los tres métodos</option>
+                    <option value="analitico">Método analítico (interpolación lineal)</option>
+                    <option value="newmark_promedio">Newmark, aceleración promedio</option>
+                    <option value="newmark_lineal">Newmark, aceleración lineal</option>
+                  </select>
+                </div>
+                <p class="field-help" style="margin-top:10px">El método analítico resuelve exactamente el oscilador entre dos muestras del registro. Newmark integra numéricamente; aquí se subdivide el paso hasta Δt ≤ T/40.</p>
+                <button id="spec-compute" class="button button-primary spec-compute" type="button" data-action="spec-compute">Calcular espectros</button>
+              </div>
+            </section>
+          </section>
+
+          <section class="analysis-result-panel" aria-label="Espectros de respuesta">
+            <div class="analysis-result-card readout">
+              <div class="readout__head">
+                <h2>Espectro de respuesta</h2>
+                <p class="formula-bar"><span class="math">ü + 2ξω u̇ + ω² u = −ü<sub>g</sub>(t)</span></p>
+              </div>
+              <div id="spec-warning" class="analysis-warning" hidden></div>
+              <div id="spec-summary" class="analysis-summary"><div class="analysis-placeholder">Carga un registro y pulsa «Calcular espectros». Mientras tanto se muestra el espectro de la E.030 del metrado.</div></div>
+            </div>
+            <div class="panel">
+              <div class="panel__head"><h2>Acelerograma</h2><span id="spec-record-caption"></span></div>
+              <div id="spec-record-chart" class="spec-chart spec-chart--record"></div>
+            </div>
+            <div class="panel">
+              <div class="panel__head subheading--with-control">
+                <h2>Espectros</h2>
+                <div class="viz-control"><label for="spec-axis">Ordenada</label>
+                  <select id="spec-axis" data-field="spec-axis">
+                    <option value="PSa" selected>PSa (g)</option>
+                    <option value="Sa">Sa absoluta (g)</option>
+                    <option value="Sd">Sd (cm)</option>
+                    <option value="Sv">Sv (cm/s)</option>
+                    <option value="PSv">PSv (cm/s)</option>
+                  </select>
+                </div>
+              </div>
+              <div id="spec-chart" class="spec-chart"></div>
+              <div id="spec-legend" class="iso-legend spec-legend"></div>
+            </div>
+            <div id="spec-table" class="panel analysis-table-card"></div>
+          </section>
+        </div>
+        <section class="page-shell stage-foot">
+          <details class="theory-section analysis-scope">
+            <summary>Cómo se calculan los espectros</summary>
+            <p>Para cada periodo T se resuelve un oscilador de un grado de libertad con amortiguamiento ξ sometido al registro. El espectro guarda el máximo desplazamiento relativo Sd, la máxima velocidad relativa Sv y la máxima aceleración absoluta Sa; las pseudo-ordenadas son PSv = ωSd y PSa = ω²Sd. El método analítico supone que la aceleración varía linealmente entre muestras y usa la solución exacta en cada tramo (Nigam y Jennings). Newmark-β resuelve paso a paso con γ = ½ y β = ¼ (aceleración promedio, incondicionalmente estable) o β = ⅙ (aceleración lineal). El espectro de la E.030 es Sa = ZUCS/R·g con C de la Tabla N° 6.</p>
+          </details>
+        </section>
+      </section>
+
       <footer class="site-footer"><div class="page-shell"><span>SismoLab · Análisis sísmico educativo según la E.030</span><span>Requiere la revisión de un ingeniero estructural</span></div></footer>
     </main>
+    <script>
+      // Lee el archivo del registro en el navegador y lo pasa al cuadro de texto.
+      document.addEventListener("change", async (event) => {
+        const input = event.target;
+        if (!input || input.id !== "spec-file" || !input.files || !input.files.length) return;
+        const file = input.files[0];
+        const text = await file.text();
+        const area = document.getElementById("spec-record");
+        area.value = text;
+        document.getElementById("spec-file-name").textContent = file.name;
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    </script>
     <script type="py" src="./app.py" config="./pyscript.toml"></script>
   </body>
 </html>

@@ -2,3 +2,4 @@
 "./stiffness.py" = ""
 "./loads.py" = ""
 "./dd_project.py" = ""
+"./spectra.py" = ""
