@@ -63,6 +63,44 @@
       <div id="rigidity-stage">
         <div class="page-shell workspace-grid">
           <section class="input-panel" aria-label="Datos del modelo">
+            <section id="dd-panel" class="panel dd-panel" aria-labelledby="dd-heading">
+              <div class="panel__head"><h2 id="dd-heading">Proyecto</h2><span>Ingeniería Resistente · DD</span></div>
+              <div class="panel__body">
+                <div class="analysis-form-grid">
+                  <div class="field-block">
+                    <label for="dd-group">Modelo</label>
+                    <select id="dd-group" data-field="dd-group">
+                      <option value="libre" selected>Modelo libre</option>
+                      <option value="1">DD · Grupo 1</option><option value="2">DD · Grupo 2</option><option value="3">DD · Grupo 3</option><option value="4">DD · Grupo 4</option><option value="5">DD · Grupo 5</option>
+                      <option value="6">DD · Grupo 6</option><option value="7">DD · Grupo 7</option><option value="8">DD · Grupo 8</option><option value="9">DD · Grupo 9</option><option value="10">DD · Grupo 10</option>
+                    </select>
+                  </div>
+                  <div class="field-block">
+                    <label for="dd-use">Uso</label>
+                    <select id="dd-use" data-field="loads-use-global">
+                      <option value="hotel">Hotel · 2,0 kN/m² · categoría C</option>
+                      <option value="vivienda">Vivienda · 2,0 kN/m² · C</option>
+                      <option value="oficina">Oficina · 2,5 kN/m² · C</option>
+                      <option value="aula">Centro educativo · 2,5 kN/m² · A₂</option>
+                      <option value="centro_comercial">Centro comercial · 5,0 kN/m² · B</option>
+                      <option value="tienda">Tienda · 5,0 kN/m² · C</option>
+                      <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m² · B</option>
+                      <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m² · B</option>
+                      <option value="corredor_publico">Corredores y escaleras públicas · 4,0 kN/m²</option>
+                      <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m² · C</option>
+                      <option value="otro">Otro · editable por nivel</option>
+                    </select>
+                  </div>
+                </div>
+                <p id="dd-site" class="field-help dd-site">Elige un grupo para cargar la planta, cotas, alturas, secciones y sitio de la Tabla 1.</p>
+                <div id="dd-fields" hidden>
+                  <p class="panel-note">Las cotas L₁–L₄ y los ángulos A y B están en el panel Retícula; los niveles, en Edificio. Todo cambio recalcula el modelo.</p>
+                  <div id="dd-param-list" class="analysis-form-grid dd-param-list"></div>
+                  <p id="dd-message" class="dd-message" hidden></p>
+                </div>
+              </div>
+            </section>
+
             <section class="panel" aria-labelledby="datos-heading">
               <div class="panel__head"><h2 id="datos-heading">Edificio</h2><span>se usa en las tres etapas</span></div>
               <div class="panel__body building-setup">
@@ -102,7 +140,7 @@
               </div>
             </section>
 
-            <details class="panel beam-editor column-editor" open>
+            <details id="manual-columns" class="panel beam-editor column-editor" open>
               <summary class="panel__head"><h2 id="column-editor-heading">Columnas</h2><span>un grupo por pórtico</span></summary>
               <details class="howto">
                 <summary>Cómo dibujar la planta</summary>
@@ -119,7 +157,7 @@
               <button id="add-group" type="button" class="button add-group editor-add-button" data-action="add" disabled>Añadir grupo de columnas <span id="group-count">1/20</span></button>
             </details>
 
-            <details class="panel beam-editor" open>
+            <details id="manual-beams" class="panel beam-editor" open>
               <summary class="panel__head"><h2 id="beam-editor-heading">Vigas</h2><span>entre nudos de la retícula</span></summary>
               <div id="beam-list" class="beam-list editor-scroll-list">
                 <p class="beam-empty">Cargando el editor de vigas…</p>
@@ -127,7 +165,7 @@
               <button id="add-beam" type="button" class="button add-beam" data-action="add-beam" disabled>Añadir viga <span id="beam-count">0/31</span></button>
             </details>
 
-            <details class="panel beam-editor slab-editor" open>
+            <details id="manual-slabs" class="panel beam-editor slab-editor" open>
               <summary class="panel__head"><h2 id="slab-editor-heading">Losas</h2><span>por paños</span></summary>
               <div id="slab-list" class="beam-list slab-list editor-scroll-list">
                 <p class="beam-empty">Cargando el editor de losas…</p>
@@ -183,6 +221,11 @@
               </div>
             </div>
 
+            <div id="dd-frames-panel" class="panel" hidden>
+              <div class="panel__head"><h2>Pórticos del proyecto</h2><span>matriz lateral con vigas flexibles</span></div>
+              <div id="dd-frame-table" class="panel__body"></div>
+            </div>
+
             <div class="contribution-card panel">
               <div class="panel__head"><h2>Aporte por grupo</h2><span id="contribution-count">—</span></div>
               <div id="contribution-list" class="contribution-list"></div>
@@ -221,14 +264,16 @@
                   <div class="field-block">
                     <label for="loads-use-global">Uso de la edificación</label>
                     <select id="loads-use-global" data-field="loads-use-global">
-                      <option value="vivienda" selected>Vivienda · 2,0 kN/m²</option>
-                      <option value="oficina">Oficina · 2,5 kN/m²</option>
-                      <option value="aula">Aula / centro de enseñanza · 2,5 kN/m²</option>
+                      <option value="hotel">Hotel · 2,0 kN/m² · categoría C</option>
+                      <option value="vivienda" selected>Vivienda · 2,0 kN/m² · C</option>
+                      <option value="oficina">Oficina · 2,5 kN/m² · C</option>
+                      <option value="aula">Centro educativo · 2,5 kN/m² · A₂</option>
+                      <option value="centro_comercial">Centro comercial · 5,0 kN/m² · B</option>
+                      <option value="tienda">Tienda · 5,0 kN/m² · C</option>
+                      <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m² · B</option>
+                      <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m² · B</option>
                       <option value="corredor_publico">Corredores y escaleras públicas · 4,0 kN/m²</option>
-                      <option value="tienda">Tiendas / centros comerciales · 5,0 kN/m²</option>
-                      <option value="biblioteca_salas">Biblioteca: sala de lectura · 3,0 kN/m²</option>
-                      <option value="biblioteca_deposito">Biblioteca: almacenaje · 7,5 kN/m²</option>
-                      <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m²</option>
+                      <option value="garaje_liviano">Estacionamiento liviano · 2,5 kN/m² · C</option>
                       <option value="otro">Otro · editable por nivel</option>
                     </select>
                     <small>Se aplica a todos los pisos; la azotea conserva su carga. Luego puedes cambiar un nivel.</small>

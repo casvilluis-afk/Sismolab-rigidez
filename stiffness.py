@@ -53,6 +53,12 @@ class ColumnGroup:
     x0: float = 0.0
     y0: float = 0.0
     beta: float = 0.0
+    # Pórticos generados (proyecto DD): matriz lateral condensada en kN/m,
+    # rigidez de entrepiso equivalente en kN/m y columnas por entrepiso.
+    lateral_matrix: list | None = None
+    equivalent_story: list | None = None
+    level_quantities: list | None = None
+    modulus: float = 0.0  # E dado directamente (MPa en SI, kgf/cm² en MKS)
 
 
 @dataclass(slots=True)
@@ -149,12 +155,14 @@ def section_inertia(shape: SectionShape, dimension: float) -> float:
     raise ValueError("La sección debe ser cuadrada o circular.")
 
 
-def elastic_modulus(material: MaterialType, fc: float, units: UnitSystem) -> float:
+def elastic_modulus(material: MaterialType, fc: float, units: UnitSystem, modulus: float = 0.0) -> float:
     if units not in ("SI", "MKS"):
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
     if material == "steel":
         # El módulo del acero es prácticamente constante en el rango elástico.
         return STEEL_MODULUS_SI if units == "SI" else STEEL_MODULUS_MKS
+    if modulus and modulus > 0:
+        return float(modulus)
     fc = _positive_number(fc, "La resistencia")
     if material == "concrete":
         return (4_700.0 if units == "SI" else 15_000.0) * sqrt(fc)
@@ -172,7 +180,7 @@ def calculate_group(
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
 
     factor = boundary_factor(group.base, group.top)
-    modulus = elastic_modulus(group.material, group.fc, units)
+    modulus = elastic_modulus(group.material, group.fc, units, group.modulus)
     inertia = section_inertia(group.shape, group.dimension)
     height = story_height_m * (1_000.0 if units == "SI" else 100.0)
     raw_stiffness = factor * modulus * inertia / height**3
@@ -222,12 +230,14 @@ def convert_group_units(group: ColumnGroup, source: UnitSystem, target: UnitSyst
     if source == "SI" and target == "MKS":
         dimension = group.dimension / 10.0
         fc = group.fc * MPA_TO_KGF_CM2
+        modulus = group.modulus * MPA_TO_KGF_CM2
     elif source == "MKS" and target == "SI":
         dimension = group.dimension * 10.0
         fc = group.fc / MPA_TO_KGF_CM2
+        modulus = group.modulus / MPA_TO_KGF_CM2
     else:
         raise ValueError("El sistema de unidades debe ser SI o MKS.")
-    return ColumnGroup(**{**asdict(group), "dimension": dimension, "fc": fc})
+    return ColumnGroup(**{**asdict(group), "dimension": dimension, "fc": fc, "modulus": modulus})
 
 
 # ---------------------------------------------------------------------------
@@ -416,11 +426,16 @@ def analyze_pseudotridimensional(
     for group in groups:
         validate_group(group)
         group_stiffnesses = []
-        for height in heights:
-            stiffness = calculate_group(group, height, units).contribution
-            if units == "MKS":
-                stiffness *= KN_PER_TONF
-            group_stiffnesses.append(stiffness)
+        if group.lateral_matrix is not None:
+            if len(group.lateral_matrix) != levels or len(group.equivalent_story or []) != levels:
+                raise ValueError(f"La matriz del pórtico {group.axis} no corresponde a {levels} niveles.")
+            group_stiffnesses = [float(value) for value in group.equivalent_story]
+        else:
+            for height in heights:
+                stiffness = calculate_group(group, height, units).contribution
+                if units == "MKS":
+                    stiffness *= KN_PER_TONF
+                group_stiffnesses.append(stiffness)
         raw_stiffnesses.append(group_stiffnesses)
         for level, stiffness in enumerate(group_stiffnesses):
             direction_totals[group.direction][level] += stiffness
@@ -451,11 +466,21 @@ def analyze_pseudotridimensional(
             - (float(group.y0) - centers_y[level]) * cos(beta)
             for level in range(levels)
         ]
+        scales = [direction_scales[group.direction][level] for level in range(levels)]
         story_stiffnesses = [
-            stiffness * direction_scales[group.direction][level]
+            stiffness * scales[level]
             for level, stiffness in enumerate(raw_group_stiffnesses)
         ]
-        local_matrix = local_shear_matrix(story_stiffnesses)
+        if group.lateral_matrix is not None:
+            # Pórtico con vigas flexibles: matriz condensada, escalada por nivel
+            # de forma simétrica si se impuso una rigidez de control.
+            root = [sqrt(value) for value in scales]
+            local_matrix = [
+                [float(group.lateral_matrix[i][j]) * root[i] * root[j] for j in range(levels)]
+                for i in range(levels)
+            ]
+        else:
+            local_matrix = local_shear_matrix(story_stiffnesses)
         transformation = frame_transformation(levels, group.beta, lever_arms)
         contribution = _matmul(_matmul(_transpose(transformation), local_matrix), transformation)
         for row in range(dofs):
@@ -538,7 +563,15 @@ def analyze_pseudotridimensional(
         local_displacements = _matvec(frame["transformation"], displacement_vector)
         floor_actions = _matvec(frame["local_matrix"], local_displacements)
         story_shears = [sum(floor_actions[level:]) for level in range(levels)]
-        column_shears = [value / int(group.quantity) for value in story_shears]
+        quantities = (
+            [int(value) for value in group.level_quantities]
+            if group.level_quantities is not None and len(group.level_quantities) == levels
+            else [int(group.quantity)] * levels
+        )
+        column_shears = [
+            value / quantities[level] if quantities[level] > 0 else 0.0
+            for level, value in enumerate(story_shears)
+        ]
         # Momento máximo de extremo: doble curvatura (empotrado-rígido) Vh/2;
         # con un extremo articulado todo el momento Vh se concentra en el otro.
         if group.base == "fixed" and group.top == "fixed":
