@@ -692,3 +692,43 @@ fieldset.field-block + fieldset.field-block, .column-card > .shape-field { margi
 .dd-opening-x { stroke: var(--ink-3); stroke-width: .9; }
 .iso-opening { fill: var(--canvas); stroke: #5b6976; stroke-width: .8; }
 .step-content--wide { grid-template-columns: minmax(0,1fr); }
+.dd-model-field { margin-top: 12px; }
+.data-table td.dd-other { color: var(--ink-3); }
+
+/* ---------- Etapa 4: espectros ---------- */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.spec-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.spec-file-row .field-help { min-width: 0; overflow-wrap: anywhere; }
+textarea { width: 100%; min-height: 120px; padding: 8px 10px; font: 13px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace; color: var(--ink); background: var(--sheet); border: 1px solid var(--field); border-radius: var(--radius); resize: vertical; }
+textarea:focus { border-color: var(--cobalt); outline: none; box-shadow: 0 0 0 2px var(--cobalt-wash); }
+.spec-record-note { min-height: 1.2em; margin-top: 8px; }
+.spec-example { margin-top: 10px; width: 100%; }
+.spec-compute { margin-top: 14px; width: 100%; }
+.spec-chart { padding: 8px 10px 4px; min-width: 0; }
+.spec-chart svg { display: block; width: 100%; height: auto; }
+.spec-chart--record svg { max-height: 240px; }
+.spec-empty { padding: 26px 14px; text-align: center; }
+.spec-grid { stroke: var(--rule-faint); stroke-width: 1; }
+.spec-axis { stroke: var(--ink-2); stroke-width: 1.2; }
+.spec-tick { fill: var(--ink-3); font-size: 11px; font-family: var(--cond); }
+.spec-axis-label { fill: var(--ink-2); font-size: 12px; font-family: var(--cond); }
+.spec-marker { stroke: var(--dir-r); stroke-width: 1; stroke-dasharray: 3 3; }
+.spec-marker-label { fill: var(--dir-r); font-size: 11px; font-family: var(--cond); }
+.spec-chart polyline { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.spec-line-record { stroke: var(--ink-2); stroke-width: 1; }
+.spec-line-analitico { stroke: var(--cobalt); stroke-width: 2.2; }
+.spec-line-promedio { stroke: var(--dir-x); stroke-width: 1.6; stroke-dasharray: 6 3; }
+.spec-line-lineal { stroke: var(--dir-y); stroke-width: 1.6; stroke-dasharray: 2 3; }
+.spec-line-e030 { stroke: var(--ink); stroke-width: 1.6; }
+.spec-line-e030-design { stroke: var(--steel); stroke-width: 1.6; stroke-dasharray: 8 4; }
+.spec-key { width: 22px; height: 0; display: inline-block; border-top: 2.5px solid; }
+.spec-key.spec-line-analitico { border-color: var(--cobalt); }
+.spec-key.spec-line-promedio { border-top-style: dashed; border-color: var(--dir-x); }
+.spec-key.spec-line-lineal { border-top-style: dotted; border-color: var(--dir-y); }
+.spec-key.spec-line-e030 { border-color: var(--ink); }
+.spec-key.spec-line-e030-design { border-top-style: dashed; border-color: var(--steel); }
+.spec-legend { padding-bottom: 12px; }
+.spec-table-scroll { max-height: 420px; overflow-y: auto; }
+.spectral-controls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.spectral-direction { margin: 18px 0 6px; font-family: var(--cond); font-size: 17px; }
+#analysis-spectral { min-width: 0; }

@@ -91,6 +91,9 @@ class DDParams:
     finishes: float = 1.0  # kN/m², acabados
     partitions: float = 1.0  # kN/m², tabiquería (no en el techo)
     use: str = "hotel"
+    # "rigid": vigas infinitamente rígidas, columnas con altura libre h − h_viga
+    # (modelo de corte del curso). "flexible": pórtico condensado con vigas.
+    stiffness_model: str = "rigid"
 
     @classmethod
     def from_group(cls, group: int, **overrides) -> "DDParams":
@@ -483,14 +486,54 @@ def column_inertia_for(params: DDParams, beta_degrees: float) -> float:
     return i_disp_x * c * c + i_disp_y * s * s
 
 
+def rigid_beam_frame(frame: Frame, heights: list[float], beam_depth: float, E: float, column_inertia: float) -> dict[str, object]:
+    """Modelo de corte: vigas infinitamente rígidas, columnas empotradas en las
+    caras de las vigas (altura libre h − h_viga). k_piso = n·12EI/h_libre³."""
+    n = len(heights)
+    columns = [len(frame.stations[level]) for level in range(n)]
+    clear = [h - beam_depth for h in heights]
+    if any(value <= 0 for value in clear):
+        raise ValueError("La altura libre h − h_viga debe ser positiva en todos los pisos.")
+    story = [columns[level] * 12.0 * E * column_inertia / clear[level] ** 3 for level in range(n)]
+    matrix = [[0.0] * n for _ in range(n)]
+    for level, k in enumerate(story):
+        matrix[level][level] += k
+        if level > 0:
+            matrix[level - 1][level - 1] += k
+            matrix[level - 1][level] -= k
+            matrix[level][level - 1] -= k
+    return {"matrix": matrix, "columns": columns, "dofs": n, "story_stiffness": story, "clear_heights": clear}
+
+
+def beam_column_ratio(params: DDParams, frame: Frame) -> float:
+    """ρ = (I_viga/L) / (I_col/h) promedio del pórtico en el piso 2 (o 1)."""
+    level = 1 if params.levels > 1 and frame.stations[1] else 0
+    stations = frame.stations[level]
+    spans = [abs(b - a) for (_n1, a), (_n2, b) in zip(stations, stations[1:]) if abs(b - a) > 1e-9]
+    if not spans:
+        return 0.0
+    beam = params.beam_b * params.beam_h**3 / 12.0
+    column = column_inertia_for(params, frame.beta)
+    return (beam / (sum(spans) / len(spans))) / (column / params.heights()[level])
+
+
 def frame_matrices(building: DDBuilding) -> list[dict[str, object]]:
     p = building.params
     heights = p.heights()
     beam_inertia = p.beam_b * p.beam_h**3 / 12.0
     results = []
     for frame in building.frames:
-        data = frame_lateral_matrix(frame, heights, p.E_kn_m2, column_inertia_for(p, frame.beta), beam_inertia)
+        inertia = column_inertia_for(p, frame.beta)
+        flexible = frame_lateral_matrix(frame, heights, p.E_kn_m2, inertia, beam_inertia)
+        flexible["story_stiffness"] = equivalent_story_stiffness(flexible["matrix"])
+        rigid = rigid_beam_frame(frame, heights, p.beam_h, p.E_kn_m2, inertia)
+        chosen = rigid if p.stiffness_model == "rigid" else flexible
+        other = flexible if p.stiffness_model == "rigid" else rigid
+        data = dict(chosen)
         data["frame"] = frame
-        data["story_stiffness"] = equivalent_story_stiffness(data["matrix"])
+        data["model"] = p.stiffness_model
+        data["other_story_stiffness"] = other["story_stiffness"]
+        data["rho"] = beam_column_ratio(p, frame)
+        data["flexible_dofs"] = flexible["dofs"]
         results.append(data)
     return results
