@@ -682,3 +682,13 @@ fieldset.field-block + fieldset.field-block, .column-card > .shape-field { margi
   .panel, .readout { break-inside: avoid; }
   .steps-scroll { display: grid !important; }
 }
+
+/* Proyecto DD */
+.dd-panel .panel__head { box-shadow: inset 3px 0 0 var(--cobalt); }
+.dd-site { margin: 10px 0 0; }
+.dd-param-list { margin-top: 4px; }
+.dd-message { margin-top: 10px; padding: 8px 10px; color: var(--ink-2); background: var(--sheet-alt); font-size: 13px; line-height: 1.45; }
+.dd-opening { fill: #fff; stroke: var(--ink-3); stroke-width: 1; }
+.dd-opening-x { stroke: var(--ink-3); stroke-width: .9; }
+.iso-opening { fill: var(--canvas); stroke: #5b6976; stroke-width: .8; }
+.step-content--wide { grid-template-columns: minmax(0,1fr); }

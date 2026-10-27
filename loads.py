@@ -52,17 +52,42 @@ class LevelLoad:
 # Valores orientativos de la Norma E.020 Cargas; el usuario puede editarlos.
 # ---------------------------------------------------------------------------
 LIVE_LOAD_PRESETS: dict[str, tuple[str, float]] = {
+    "hotel": ("Hotel (cuartos)", 2.0),
     "vivienda": ("Vivienda", 2.0),
     "oficina": ("Oficina", 2.5),
     "aula": ("Aula / centro de enseñanza", 2.5),
     "corredor_publico": ("Corredores y escaleras de acceso público", 4.0),
-    "tienda": ("Tiendas / centros comerciales", 5.0),
+    "tienda": ("Tiendas", 5.0),
+    "centro_comercial": ("Centro comercial", 5.0),
     "biblioteca_salas": ("Bibliotecas: salas de lectura", 3.0),
     "biblioteca_deposito": ("Bibliotecas: salas de almacenaje", 7.5),
     "garaje_liviano": ("Estacionamiento de vehículos livianos", 2.5),
     "azotea_no_transitable": ("Azotea / techo no transitable", 1.0),
     "otro": ("Otro (ingresar manualmente)", 2.0),
 }
+
+
+# Categoría E.030:2026 (Tabla N° 7) asociada a cada uso. Hoteles, oficinas
+# y viviendas son comunes (C); instituciones educativas, A2; centros
+# comerciales y bibliotecas, B. None deja la categoría elegida a mano.
+USE_CATEGORY: dict[str, str | None] = {
+    "hotel": "C",
+    "vivienda": "C",
+    "oficina": "C",
+    "aula": "A2",
+    "corredor_publico": None,
+    "tienda": "C",
+    "centro_comercial": "B",
+    "biblioteca_salas": "B",
+    "biblioteca_deposito": "B",
+    "garaje_liviano": "C",
+    "azotea_no_transitable": None,
+    "otro": None,
+}
+
+
+def use_category(key: str) -> str | None:
+    return USE_CATEGORY.get(key)
 
 
 def live_load_preset(key: str) -> float:

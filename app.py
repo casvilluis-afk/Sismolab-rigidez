@@ -8,6 +8,9 @@ from math import cos, hypot, isfinite, pi, radians, sin
 
 from pyscript import document, when
 
+import dd_project as dd
+import loads as loads_module
+
 from stiffness import (
     ColumnGroup,
     KN_PER_TONF,
@@ -47,6 +50,7 @@ from loads import (
     irregularity_restriction,
     live_load_preset,
     static_seismic_forces,
+    use_category,
 )
 
 
@@ -96,6 +100,12 @@ analysis_ecc_y = 0.0
 analysis_view_level = None
 analysis_selected_axis_id = None
 analysis_modal_mode = 0
+dd_active = False
+dd_params = dd.DDParams()
+dd_building = None
+dd_frames: list = []
+dd_takeoffs: list = []
+dd_error = ""
 rigidity_plan_level = 0
 plan_span_lengths = [4.0, 5.0, 4.0, 5.0]
 plan_angle_a = None
@@ -187,10 +197,10 @@ def get_load_level(level_id: str) -> LevelLoad | None:
     return next((level for level in load_levels if level.id == level_id), None)
 
 
-def column_takeoff(story_height_m: float) -> dict[str, float | int]:
+def column_takeoff(story_height_m: float, level_index: int | None = None) -> dict[str, float | int]:
     """Metrado de las columnas definidas en Rigidez para un entrepiso."""
 
-    rows = column_takeoff_rows(story_height_m)
+    rows = column_takeoff_rows(story_height_m, level_index)
     return {
         "count": sum(int(row["quantity"]) for row in rows),
         "volume": sum(float(row["volume"]) for row in rows),
@@ -198,9 +208,11 @@ def column_takeoff(story_height_m: float) -> dict[str, float | int]:
     }
 
 
-def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
+def column_takeoff_rows(story_height_m: float, level_index: int | None = None) -> list[dict[str, object]]:
     """Desglose de columnas por grupo, incluyendo masa y centroide en planta."""
 
+    if dd_active and dd_building is not None and level_index is not None:
+        return _dd_column_rows(level_index)
     rows: list[dict[str, object]] = []
     placement = _grid_column_placement()
     for index, group in enumerate(groups):
@@ -237,7 +249,7 @@ def column_takeoff_rows(story_height_m: float) -> list[dict[str, object]]:
 
 
 def column_takeoffs_for_levels() -> list[dict[str, float | int]]:
-    return [column_takeoff(level.height) for level in load_levels]
+    return [column_takeoff(level.height, index) for index, level in enumerate(load_levels)]
 
 
 def _derived_story_stiffnesses() -> tuple[list[float], list[float]]:
@@ -245,6 +257,12 @@ def _derived_story_stiffnesses() -> tuple[list[float], list[float]]:
 
     stiffness_x: list[float] = []
     stiffness_y: list[float] = []
+    if dd_active and dd_building is not None:
+        for index, level in enumerate(load_levels):
+            derived_x, derived_y = _dd_story_totals(index)
+            stiffness_x.append(float(level.stiffness_x_override) if level.stiffness_x_override > 0 else derived_x)
+            stiffness_y.append(float(level.stiffness_y_override) if level.stiffness_y_override > 0 else derived_y)
+        return stiffness_x, stiffness_y
     for level in load_levels:
         story = calculate_story(groups, level.height, units)
         conversion = KN_PER_TONF if units == "MKS" else 1.0
@@ -455,7 +473,7 @@ def contribution_row(group: ColumnGroup, calculation: dict, index: int, directio
       <div class="contribution-row">
         <div class="contribution-symbol"><span class="shape-symbol{circle_class}"></span></div>
         <div class="contribution-main">
-          <div><strong>C{index + 1}</strong><span>Eje {escape(str(group.axis))} · {group.quantity} × {shape_name(group.shape)} · {material_label(group.material)}</span><em>{format_number(percent, 1)}%</em></div>
+          <div><strong>C{index + 1}</strong><span>{escape(_display_axis(group.axis))} · {group.quantity} × {shape_name(group.shape)} · {material_label(group.material)}</span><em>{format_number(percent, 1)}%</em></div>
           <div class="progress-track"><span style="width:{min(100.0, percent):.2f}%"></span></div>
         </div>
         <b>{format_number(calculation['contribution'])}<small>{calculation['stiffness_unit']}</small></b>
@@ -483,7 +501,7 @@ def calculation_step(group: ColumnGroup, calculation: dict, index: int) -> str:
     open_attribute = " open" if index == 0 else ""
     return f"""
       <details class="step-detail"{open_attribute}>
-        <summary><span>C{index + 1}</span><div><strong>Eje {escape(str(group.axis))} · sección {shape_name(group.shape)} × {group.quantity}</strong><small>{material_label(group.material)} · {direction_label(group.direction)} · {support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
+        <summary><span>C{index + 1}</span><div><strong>{escape(_display_axis(group.axis))} · sección {shape_name(group.shape)} × {group.quantity}</strong><small>{material_label(group.material)} · {direction_label(group.direction)} · {support_name(group.base, 'base')} · unión {support_name(group.top, 'top')}</small></div><b>›</b></summary>
         <div class="step-content">
           {section_diagram(group.shape)}
           <ol>
@@ -814,7 +832,7 @@ def _legacy_render_plan_diagram() -> None:
 def _display_axis(axis: str) -> str:
     """Presenta una etiqueta uniforme sin obligar al usuario a escribir 'Eje'."""
     clean = str(axis).strip() or "?"
-    return clean if clean.lower().startswith("eje ") else f"Eje {clean}"
+    return clean if clean.lower().startswith(("eje ", "ala ")) else f"Eje {clean}"
 
 
 def _grid_layout(cap_per_axis: int = 10) -> list[tuple[str, list[tuple[str, str, str]], int]]:
@@ -1072,6 +1090,8 @@ def sync_beams_to_load_levels() -> None:
 
     Los tramos que se repiten entre vigas del mismo nivel se cuentan una sola vez.
     """
+    if dd_active:
+        return
 
     for level_index, level in enumerate(load_levels):
         segments = _beam_counted_segments(level_index)
@@ -1199,6 +1219,8 @@ def sync_slabs_to_load_levels() -> None:
 
     Si dos paños se superponen en un nivel, el área común se cuenta una vez.
     """
+    if dd_active:
+        return
 
     for level_index, level in enumerate(load_levels):
         panels = _slab_counted_panels(level_index)
@@ -1301,6 +1323,8 @@ def render_rigidity_plan_selector() -> None:
 
 
 def sync_model_geometry_to_levels() -> None:
+    if dd_active:
+        return
     """Transfiere las dimensiones generales de Rigidez al modelo por niveles."""
 
     geometry = _typical_plan_geometry()
@@ -1527,6 +1551,14 @@ def _typical_plan_svg(geometry: dict[str, object], mode: str) -> str:
 
 def render_frame_diagram() -> None:
     """Dibuja el edificio completo sin cambiar la escala al variar sus niveles."""
+    if dd_active and dd_building is not None:
+        by_id("frame-diagram-3d").innerHTML = _dd_iso_svg()
+        total_columns = sum(len(level.nodes) for level in dd_building.levels)
+        by_id("diagram-caption").textContent = (
+            f"{len(dd_building.levels)} niveles · {total_columns} tramos de columna · "
+            f"H = {format_number(sum(dd_params.heights()), 2)} m"
+        )
+        return
     layout = _fixed_grid_column_slots()
     if not groups:
         by_id("frame-diagram-3d").innerHTML = ""
@@ -1765,6 +1797,17 @@ def render_plan_diagram() -> None:
     """Presenta la planta detallada del nivel elegido en una única vista."""
 
     render_rigidity_plan_selector()
+    if dd_active and dd_building is not None:
+        level_index = max(0, min(rigidity_plan_level, len(dd_building.levels) - 1))
+        level = dd_building.levels[level_index]
+        takeoff = dd_takeoffs[level_index]
+        by_id("frame-diagram-plan").innerHTML = _dd_plan_svg(level_index)
+        by_id("plan-wing-legend").hidden = True
+        by_id("plan-caption").textContent = (
+            f"{_rigidity_level_name(level_index)}: {len(level.nodes)} columnas, {len(level.beams)} vigas, "
+            f"losa neta {format_number(takeoff['area'], 2)} m² (aberturas {format_number(takeoff['opening_area'], 2)} m²)."
+        )
+        return
     geometry = _typical_plan_geometry()
     selected_level = load_levels[rigidity_plan_level]
     mode = "roof" if selected_level.is_roof else "typical"
@@ -1799,7 +1842,537 @@ def show_warning(message: str | None) -> None:
     warning.textContent = message or ""
 
 
+# ---------------------------------------------------------------------------
+# Proyecto DD (Ingeniería Resistente): edificio con ala, generado de la Tabla 1
+# ---------------------------------------------------------------------------
+
+DD_PARAM_FIELDS = {
+    # clave: (etiqueta, unidad, paso, mínimo)
+    "H1": ("Altura del piso 1", "m", "0.05", "2"),
+    "H2": ("Altura de pisos superiores", "m", "0.05", "2"),
+    "column_bx": ("Columna, lado en X", "m", "0.05", "0.2"),
+    "column_by": ("Columna, lado en Y", "m", "0.05", "0.2"),
+    "beam_b": ("Viga, ancho b", "m", "0.05", "0.15"),
+    "beam_h": ("Viga, peralte h", "m", "0.05", "0.25"),
+    "slab_floor": ("Losa maciza, pisos", "m", "0.01", "0.1"),
+    "slab_roof": ("Losa maciza, techo", "m", "0.01", "0.1"),
+    "E_tcm2": ("Módulo E", "t/cm²", "1", "50"),
+    "gamma_tm3": ("Peso específico γ", "t/m³", "0.01", "1"),
+    "finishes": ("Acabados", "kN/m²", "0.1", "0"),
+    "partitions": ("Tabiquería (pisos)", "kN/m²", "0.1", "0"),
+}
+
+
+def _dd_frame_label(frame) -> str:
+    return frame.label
+
+
+def dd_rebuild(render: bool = True, refresh_inputs: bool = False, skip: tuple[str, ...] = ()) -> None:
+    """Regenera geometría, metrado, pórticos y análisis del proyecto DD."""
+
+    global dd_building, dd_frames, dd_takeoffs, dd_error, groups, story_height
+    global analysis_heights, analysis_level_count
+    dd_params.L1, dd_params.L2, dd_params.L3, dd_params.L4 = (float(value) for value in plan_span_lengths)
+    if plan_angle_a is not None:
+        dd_params.A = float(plan_angle_a)
+    if plan_angle_b is not None:
+        dd_params.B = float(plan_angle_b)
+    dd_params.levels = len(load_levels)
+    dd_params.use = loads_use_preset if loads_use_preset in LIVE_LOAD_PRESETS else "hotel"
+    try:
+        building = dd.build_building(dd_params)
+        frames = dd.frame_matrices(building)
+    except (ValueError, ZeroDivisionError) as error:
+        dd_error = str(error)
+        if render:
+            render_dd_panel()
+        return
+    dd_error = ""
+    dd_building = building
+    dd_frames = frames
+    dd_takeoffs = [dd.level_takeoff(building, index) for index in range(len(building.levels))]
+    loads_module.CONCRETE_UNIT_WEIGHT = dd_params.gamma_kn_m3
+
+    length_factor = 1_000.0 if units == "SI" else 100.0
+    modulus = dd_params.E_kn_m2 / 1_000.0 if units == "SI" else dd_params.E_tcm2 * 1_000.0
+    new_groups = []
+    for data in frames:
+        frame = data["frame"]
+        columns = [int(value) for value in data["columns"]]
+        new_groups.append(
+            ColumnGroup(
+                id=f"dd-{frame.id}",
+                quantity=max(1, max(columns)),
+                shape="square",
+                dimension=dd_params.column_bx * length_factor,
+                fc=21.0 if units == "SI" else 210.0,
+                base="fixed",
+                top="fixed",
+                material="concrete",
+                direction=frame.direction,
+                axis=frame.label,
+                x0=frame.x0,
+                y0=frame.y0,
+                beta=frame.beta,
+                lateral_matrix=[list(row) for row in data["matrix"]],
+                equivalent_story=list(data["story_stiffness"]),
+                level_quantities=columns,
+                modulus=modulus,
+            )
+        )
+    groups = new_groups
+
+    heights = dd_params.heights()
+    story_height = dd_params.H2
+    for index, level in enumerate(load_levels):
+        takeoff = dd_takeoffs[index]
+        roof = building.levels[index].is_roof
+        level.height = heights[index]
+        level.label = "Techo" if roof else f"Piso {index + 1}"
+        level.area = takeoff["area"]
+        level.cm = takeoff["cm_surface"]
+        level.use_key = "azotea_no_transitable" if roof else dd_params.use
+        level.cv = takeoff["cv"]
+        level.slab_thickness = takeoff["slab_thickness"]
+        level.slab_volume_override = takeoff["slab_volume"]
+        level.center_x, level.center_y = takeoff["slab_center"]
+        level.beam_count = int(takeoff["beam_count"])
+        level.beam_width = dd_params.beam_b
+        level.beam_depth = dd_params.beam_h - takeoff["slab_thickness"]
+        level.beam_length = takeoff["beam_length"] / max(1, takeoff["beam_count"])
+        level.beam_volume_override = takeoff["beam_volume"]
+        level.beam_center_x, level.beam_center_y = takeoff["beam_center"]
+        level.plan_x = takeoff["plan_x"]
+        level.plan_y = takeoff["plan_y"]
+    analysis_heights = list(heights)
+    analysis_level_count = len(load_levels)
+    _transfer_loads_to_analysis()
+    if render:
+        render_all(refresh_inputs=refresh_inputs, skip=skip)
+
+
+def activate_dd(group_number: int) -> None:
+    global dd_active, dd_params, plan_span_lengths, plan_angle_a, plan_angle_b, units
+    global loads_zone, loads_soil, loads_category, loads_system, loads_use_preset, rigidity_plan_level
+    first_activation = not dd_active
+    data = dd.DD_GROUPS[group_number]
+    site = dd.DD_SITES[group_number]
+    keep = {} if first_activation else {
+        key: getattr(dd_params, key)
+        for key in ("column_bx", "column_by", "beam_b", "beam_h", "slab_floor", "slab_roof", "E_tcm2", "gamma_tm3", "finishes", "partitions")
+    }
+    dd_params = dd.DDParams.from_group(group_number, **keep)
+    dd_active = True
+    plan_span_lengths = [data["L1"], data["L2"], data["L3"], data["L4"]]
+    plan_angle_a, plan_angle_b = data["A"], data["B"]
+    loads_zone = str(site["zone"])
+    loads_soil = str(site["soil"])
+    if first_activation:
+        units = "MKS"
+        loads_use_preset = "hotel"
+        loads_system = "porticos"
+        rigidity_plan_level = 0
+        configure_building_levels(3, render=False)
+    category = use_category(loads_use_preset)
+    if category:
+        loads_category = category
+    dd_rebuild(render=True, refresh_inputs=True)
+
+
+def deactivate_dd() -> None:
+    reset()
+
+
+def render_all(refresh_inputs: bool = False, skip: tuple[str, ...] = ()) -> None:
+    """Redibuja todo. Las listas que el usuario está editando se omiten con `skip`
+    para no perder el foco del campo mientras escribe."""
+    render_dd_panel()
+    if refresh_inputs:
+        render_dd_param_list()
+        render_model_geometry_inputs()
+        by_id("story-height").value = input_number(story_height)
+    render_unit_toggle()
+    render_groups()
+    render_beams()
+    render_slabs()
+    render_results()
+    if "levels" not in skip:
+        render_load_levels()
+    render_loads_site_inputs()
+    render_loads_results()
+    if "analysis" not in skip:
+        render_analysis_inputs()
+    render_analysis_results()
+
+
+def render_dd_panel() -> None:
+    by_id("dd-group").value = str(dd_params.group) if dd_active else "libre"
+    by_id("dd-use").value = loads_use_preset
+    by_id("dd-fields").hidden = not dd_active
+    by_id("dd-frames-panel").hidden = not dd_active
+    for element_id in ("manual-columns", "manual-beams", "manual-slabs"):
+        by_id(element_id).hidden = dd_active
+    if not dd_active:
+        by_id("dd-site").textContent = "Elige un grupo para cargar la planta, cotas, alturas, secciones y sitio de la Tabla 1."
+        return
+    site = dd.DD_SITES[dd_params.group]
+    zone_note = "" if site["confirmed"] else " (por confirmar en el Anexo II de la E.030)"
+    by_id("dd-site").textContent = (
+        f"{site['district']}, {site['province']}, {site['region']}: suelo {site['soil']}, zona {site['zone']}{zone_note}."
+    )
+    by_id("dd-use").value = loads_use_preset
+    message = by_id("dd-message")
+    if dd_error:
+        message.hidden = False
+        message.textContent = dd_error
+    elif dd_building is not None:
+        message.hidden = False
+        peak_x, peak_y = dd_building.peak
+        message.textContent = (
+            f"Vértice del ala en x = {format_number(peak_x, 2)} m, y = {format_number(peak_y, 2)} m "
+            f"(intersección de los bordes a {format_number(dd_params.A, 2)}° y {format_number(dd_params.B, 2)}°)."
+        )
+    else:
+        message.hidden = True
+    rows = []
+    for data in dd_frames:
+        frame = data["frame"]
+        k_values = " · ".join(_compact_number(value) for value in data["story_stiffness"])
+        rows.append(
+            f"<tr><td>{escape(frame.label)}</td><td>{format_number(frame.beta, 2)}°</td>"
+            f"<td>{format_number(frame.x0, 2)}</td><td>{format_number(frame.y0, 2)}</td>"
+            f"<td>{' / '.join(str(value) for value in data['columns'])}</td><td>{k_values}</td></tr>"
+        )
+    by_id("dd-frame-table").innerHTML = (
+        '<div class="table-scroll"><table class="data-table"><thead><tr><th>Pórtico</th><th>β</th><th>x₀ (m)</th>'
+        '<th>y₀ (m)</th><th>Columnas por piso</th><th>K equivalente por piso (kN/m)</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def render_dd_param_list() -> None:
+    if not dd_active:
+        by_id("dd-param-list").innerHTML = ""
+        return
+    fields = []
+    for key, (label, unit, step, minimum) in DD_PARAM_FIELDS.items():
+        fields.append(
+            f'<div class="field-block"><label for="dd-{key}">{label}</label>'
+            f'<div class="input-with-unit"><input id="dd-{key}" type="number" min="{minimum}" step="{step}" '
+            f'value="{input_number(getattr(dd_params, key), 4)}" data-field="dd-param" data-key="{key}" /><span>{unit}</span></div></div>'
+        )
+    by_id("dd-param-list").innerHTML = "".join(fields)
+
+
+def _dd_story_totals(level_index: int) -> tuple[float, float]:
+    """Rigidez de entrepiso equivalente en X e Y (kN/m) del proyecto DD."""
+    total_x = total_y = 0.0
+    for data in dd_frames:
+        if level_index >= len(data["story_stiffness"]):
+            continue
+        k = float(data["story_stiffness"][level_index])
+        beta = radians(float(data["frame"].beta))
+        total_x += k * cos(beta) ** 2
+        total_y += k * sin(beta) ** 2
+    return total_x, total_y
+
+
+def _dd_column_rows(level_index: int) -> list[dict[str, object]]:
+    """Columnas del nivel agrupadas por altura tributaria (½ inferior + ½ superior)."""
+    if dd_building is None or level_index >= len(dd_takeoffs):
+        return []
+    takeoff = dd_takeoffs[level_index]
+    level = dd_building.levels[level_index]
+    gamma = dd_params.gamma_kn_m3
+    section = dd_params.column_bx * dd_params.column_by
+    by_height: dict[float, list[str]] = {}
+    for node, height in takeoff["column_heights"].items():
+        by_height.setdefault(round(height, 4), []).append(node)
+    rows = []
+    shape = "cuadrada" if abs(dd_params.column_bx - dd_params.column_by) < 1e-9 else "rectangular"
+    for number, (height, nodes) in enumerate(sorted(by_height.items(), reverse=True), start=1):
+        quantity = len(nodes)
+        volume = quantity * section * height
+        weight = volume * gamma
+        cx = sum(level.nodes[node][0] for node in nodes) / quantity
+        cy = sum(level.nodes[node][1] for node in nodes) / quantity
+        rows.append(
+            {
+                "number": number,
+                "description": f"C1 {format_number(dd_params.column_bx, 2)}×{format_number(dd_params.column_by, 2)} · h trib. {format_number(height, 2)} m",
+                "quantity": quantity,
+                "shape": shape,
+                "dimension": dd_params.column_bx,
+                "height": height,
+                "unit_weight": gamma,
+                "volume": volume,
+                "weight": weight,
+                **component_mass_properties(weight, cx, cy),
+            }
+        )
+    return rows
+
+
+def _dd_plan_svg(level_index: int, markers: list | None = None) -> str:
+    building = dd_building
+    if building is None:
+        return '<p class="matrix-caption">Corrige los datos del proyecto para dibujar la planta.</p>'
+    level_index = max(0, min(level_index, len(building.levels) - 1))
+    level = building.levels[level_index]
+    typical = building.levels[0]
+    all_points = list(typical.nodes.values())
+    min_x = min(p[0] for p in all_points)
+    max_x = max(p[0] for p in all_points)
+    min_y = min(p[1] for p in all_points)
+    max_y = max(p[1] for p in all_points)
+    width, height = max(max_x - min_x, 1.0), max(max_y - min_y, 1.0)
+    scale = min(560.0 / width, 420.0 / height)
+    pad_left, pad_top, pad_right, pad_bottom = 66.0, 70.0, 70.0, 60.0
+    svg_w = pad_left + width * scale + pad_right
+    svg_h = pad_top + height * scale + pad_bottom
+
+    def px(point):
+        return pad_left + (point[0] - min_x) * scale, pad_top + (max_y - point[1]) * scale
+
+    parts = [
+        f'<svg viewBox="0 0 {svg_w:.0f} {svg_h:.0f}" preserveAspectRatio="xMidYMid meet" role="img" '
+        f'aria-label="Planta del proyecto DD, {escape(_rigidity_level_name(level_index))}">'
+    ]
+    outline = " ".join(f"{x:.1f},{y:.1f}" for x, y in (px(p) for p in level.outline))
+    parts.append(f'<polygon class="dd-model-slab" points="{outline}"/>')
+    for polygon in level.openings:
+        corners = [px(p) for p in polygon]
+        pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in corners)
+        parts.append(f'<polygon class="dd-opening" points="{pts}"/>')
+        parts.append(f'<line class="dd-opening-x" x1="{corners[0][0]:.1f}" y1="{corners[0][1]:.1f}" x2="{corners[2][0]:.1f}" y2="{corners[2][1]:.1f}"/>')
+        parts.append(f'<line class="dd-opening-x" x1="{corners[1][0]:.1f}" y1="{corners[1][1]:.1f}" x2="{corners[3][0]:.1f}" y2="{corners[3][1]:.1f}"/>')
+
+    bubble_r, gap = 11.0, 26.0
+    xs, ys = building.xs, building.ys
+    top_px = px((0.0, max_y))[1]
+    bottom_px = px((0.0, min_y))[1]
+    left_px = px((min_x, 0.0))[0]
+    for index, x_value in enumerate(xs):
+        x_pos = px((x_value, 0.0))[0]
+        parts.append(f'<line class="dd-grid-beam" x1="{x_pos:.1f}" y1="{bottom_px + 8:.1f}" x2="{x_pos:.1f}" y2="{top_px - gap:.1f}"/>')
+        by = top_px - gap - bubble_r
+        parts.append(f'<circle class="dd-bubble" cx="{x_pos:.1f}" cy="{by:.1f}" r="{bubble_r:.0f}"/>')
+        parts.append(f'<text class="dd-axis-label" x="{x_pos:.1f}" y="{by + 4.5:.1f}" text-anchor="middle">{dd.AXIS_LETTERS[index]}</text>')
+    right_limit = px((max_x, 0.0))[0]
+    for index, y_value in enumerate(ys):
+        y_pos = px((0.0, y_value))[1]
+        parts.append(f'<line class="dd-grid-beam" x1="{left_px - gap:.1f}" y1="{y_pos:.1f}" x2="{right_limit + 8:.1f}" y2="{y_pos:.1f}"/>')
+        bx = left_px - gap - bubble_r
+        parts.append(f'<circle class="dd-bubble" cx="{bx:.1f}" cy="{y_pos:.1f}" r="{bubble_r:.0f}"/>')
+        parts.append(f'<text class="dd-axis-label" x="{bx:.1f}" y="{y_pos + 4.5:.1f}" text-anchor="middle">{index + 1}</text>')
+
+    beam_width_px = max(2.5, min(7.0, dd_params.beam_b * scale))
+    for a, b, _frame in level.beams:
+        (x1, y1), (x2, y2) = px(level.nodes[a]), px(level.nodes[b])
+        parts.append(f'<line class="dd-model-beam" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" style="stroke-width:{beam_width_px:.1f}px"/>')
+    col_w = max(7.0, dd_params.column_bx * scale)
+    col_h = max(7.0, dd_params.column_by * scale)
+    for node, point in level.nodes.items():
+        x_pos, y_pos = px(point)
+        parts.append(
+            f'<rect class="dd-column dd-column--concrete" x="{x_pos - col_w / 2:.1f}" y="{y_pos - col_h / 2:.1f}" '
+            f'width="{col_w:.1f}" height="{col_h:.1f}"><title>{escape(node)} · ({format_number(point[0], 2)}; {format_number(point[1], 2)}) m</title></rect>'
+        )
+
+    # Cotas en X (abajo) y en Y (derecha) con las luces de la retícula.
+    dim_y = bottom_px + 34.0
+    parts.append(f'<line class="dd-dim-line" x1="{px((xs[0], 0))[0]:.1f}" y1="{dim_y:.1f}" x2="{px((xs[-1], 0))[0]:.1f}" y2="{dim_y:.1f}"/>')
+    labels_x = ["L1", "L2", "L2", "L1"]
+    for index, x_value in enumerate(xs):
+        x_pos = px((x_value, 0.0))[0]
+        parts.append(f'<line class="dd-dim-tick" x1="{x_pos - 4:.1f}" y1="{dim_y + 4:.1f}" x2="{x_pos + 4:.1f}" y2="{dim_y - 4:.1f}"/>')
+        if index < len(xs) - 1:
+            mid = px(((x_value + xs[index + 1]) / 2.0, 0.0))[0]
+            parts.append(f'<text class="dd-dim-label" x="{mid:.1f}" y="{dim_y - 6:.1f}" text-anchor="middle">{format_number(xs[index + 1] - x_value, 2)}</text>')
+            parts.append(f'<text class="dd-slab-label" x="{mid:.1f}" y="{dim_y + 16:.1f}" text-anchor="middle">{labels_x[index]}</text>')
+    dim_x = right_limit + 40.0
+    parts.append(f'<line class="dd-dim-line" x1="{dim_x:.1f}" y1="{px((0, ys[0]))[1]:.1f}" x2="{dim_x:.1f}" y2="{px((0, ys[-1]))[1]:.1f}"/>')
+    labels_y = ["L3", "L4", "L3"]
+    for index, y_value in enumerate(ys):
+        y_pos = px((0.0, y_value))[1]
+        parts.append(f'<line class="dd-dim-tick" x1="{dim_x - 4:.1f}" y1="{y_pos + 4:.1f}" x2="{dim_x + 4:.1f}" y2="{y_pos - 4:.1f}"/>')
+        if index < len(ys) - 1:
+            mid = px((0.0, (y_value + ys[index + 1]) / 2.0))[1]
+            parts.append(f'<text class="dd-dim-label" x="{dim_x - 6:.1f}" y="{mid:.1f}" text-anchor="middle" transform="rotate(-90 {dim_x - 6:.1f} {mid:.1f})">{format_number(ys[index + 1] - y_value, 2)}</text>')
+            parts.append(f'<text class="dd-slab-label" x="{dim_x + 16:.1f}" y="{mid:.1f}" text-anchor="middle" transform="rotate(-90 {dim_x + 16:.1f} {mid:.1f})">{labels_y[index]}</text>')
+    if not level.is_roof:
+        peak_px = px(building.peak)
+        parts.append(f'<text class="dd-axis-label dd-axis-label--wing" x="{peak_px[0] + 10:.1f}" y="{peak_px[1] - 8:.1f}">V</text>')
+    for x_value, y_value, label, kind in markers or []:
+        mx, my = px((x_value, y_value))
+        if kind == "cr":
+            parts.append(f'<rect class="analysis-cr" x="{mx - 7:.1f}" y="{my - 7:.1f}" width="14" height="14" transform="rotate(45 {mx:.1f} {my:.1f})"/>')
+            parts.append(f'<text class="analysis-cr-label" x="{mx + 12:.1f}" y="{my + 16:.1f}">{escape(label)}</text>')
+        else:
+            parts.append(f'<circle class="analysis-cm" cx="{mx:.1f}" cy="{my:.1f}" r="7"/>')
+            parts.append(f'<text class="analysis-cm-label" x="{mx + 12:.1f}" y="{my - 8:.1f}">{escape(label)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _dd_iso_svg() -> str:
+    building = dd_building
+    if building is None:
+        return ""
+    heights = dd_params.heights()
+    cos30, sin30 = 0.866, 0.5
+    extent = max(max(p[0] for p in building.levels[0].nodes.values()), max(p[1] for p in building.levels[0].nodes.values()), 1.0)
+    unit = 380.0 / (2.0 * extent * cos30)  # píxeles por metro: la planta ocupa ~380 px de ancho
+    vertical = 1.0
+    points_cache: list[tuple[float, float]] = []
+
+    def project(x: float, y: float, z: float) -> tuple[float, float]:
+        point = ((x - y) * cos30 * unit, (-(x + y) * sin30 - z * vertical) * unit)
+        points_cache.append(point)
+        return point
+
+    elevations = [0.0]
+    for h in heights:
+        elevations.append(elevations[-1] + h)
+    body: list[str] = []
+    for x, y in building.levels[0].nodes.values():
+        fx, fy = project(x, y, 0.0)
+        body.append(f'<line class="iso-footing" x1="{fx - 4:.1f}" y1="{fy + 3:.1f}" x2="{fx + 4:.1f}" y2="{fy + 3:.1f}"/>')
+    for index, level in enumerate(building.levels):
+        z_top, z_bottom = elevations[index + 1], elevations[index]
+        for node, (x, y) in level.nodes.items():
+            x1, y1 = project(x, y, z_bottom)
+            x2, y2 = project(x, y, z_top)
+            body.append(f'<line class="iso-column-concrete iso-column-segment" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" style="stroke-width:2.6"/>')
+        slab = " ".join(f"{px_:.1f},{py_:.1f}" for px_, py_ in (project(x, y, z_top) for x, y in level.outline))
+        slab_class = "iso-slab iso-slab--top" if index == len(building.levels) - 1 else "iso-slab iso-slab--floor"
+        body.append(f'<polygon class="{slab_class}" points="{slab}"/>')
+        for opening in level.openings:
+            hole = " ".join(f"{px_:.1f},{py_:.1f}" for px_, py_ in (project(x, y, z_top) for x, y in opening))
+            body.append(f'<polygon class="iso-opening" points="{hole}"/>')
+        for a, b, _frame in level.beams:
+            (xa, ya), (xb, yb) = level.nodes[a], level.nodes[b]
+            p1, p2 = project(xa, ya, z_top), project(xb, yb, z_top)
+            body.append(f'<line class="iso-model-beam" x1="{p1[0]:.1f}" y1="{p1[1]:.1f}" x2="{p2[0]:.1f}" y2="{p2[1]:.1f}" style="stroke-width:1.6"/>')
+        label = project(building.levels[0].outline[1][0] + 1.5, building.levels[0].outline[1][1] - 1.5, z_top)
+        body.append(f'<text class="iso-level-label" x="{label[0]:.1f}" y="{label[1]:.1f}">{"Techo" if level.is_roof else f"Piso {index + 1}"}</text>')
+    min_px = min(p[0] for p in points_cache) - 30
+    max_px = max(p[0] for p in points_cache) + 50
+    min_py = min(p[1] for p in points_cache) - 20
+    max_py = max(p[1] for p in points_cache) + 20
+    return (
+        f'<svg viewBox="{min_px:.0f} {min_py:.0f} {max_px - min_px:.0f} {max_py - min_py:.0f}" '
+        f'preserveAspectRatio="xMidYMid meet" role="img" aria-label="Vista 3D del edificio del proyecto DD">'
+        + "".join(body) + "</svg>"
+    )
+
+
+def _dd_frame_step(data: dict, index: int) -> str:
+    frame = data["frame"]
+    levels = len(data["matrix"])
+    labels = [f"Piso {level + 1}" for level in range(levels)]
+    k_rows = "".join(
+        f"<tr><td>{labels[level]}</td><td>{data['columns'][level]}</td><td>{format_number(dd_params.heights()[level], 2)}</td>"
+        f"<td>{format_number(data['story_stiffness'][level], 1)}</td><td>{format_number(data['story_stiffness'][level] / KN_PER_TONF, 1)}</td></tr>"
+        for level in range(levels)
+    )
+    return f"""
+    <details class="step-detail">
+      <summary><span>P{index + 1}</span><div><strong>{escape(frame.label)} · β = {format_number(frame.beta, 2)}°</strong><small>{' / '.join(str(v) for v in data['columns'])} columnas por piso · {data['dofs']} grados de libertad antes de condensar</small></div><b>›</b></summary>
+      <div class="step-content step-content--wide">
+        <div>
+          <p class="matrix-caption">Matriz lateral condensada K<sub>L</sub> = K<sub>uu</sub> − K<sub>uθ</sub>K<sub>θθ</sub><sup>−1</sup>K<sub>θu</sub> (kN/m). Columnas y vigas a flexión, sin deformación axial, base empotrada.</p>
+          {_matrix_table(data['matrix'], labels)}
+          <p class="matrix-caption" style="margin-top:10px">Rigidez de entrepiso equivalente: cortante de piso entre desplazamiento relativo, con una fuerza unitaria en cada nivel.</p>
+          <div class="table-scroll"><table class="data-table"><thead><tr><th>Piso</th><th>Columnas</th><th>h (m)</th><th>K (kN/m)</th><th>K (t/m)</th></tr></thead><tbody>{k_rows}</tbody></table></div>
+        </div>
+      </div>
+    </details>
+    """
+
+
+def _dd_render_results() -> None:
+    labels = unit_labels()
+    level_index = max(0, min(rigidity_plan_level, len(load_levels) - 1))
+    total_x, total_y = _dd_story_totals(level_index)
+    factor = 1.0 if units == "SI" else 1.0 / KN_PER_TONF
+    by_id("stiffness-unit-x").textContent = labels["stiffness"]
+    by_id("stiffness-unit-y").textContent = labels["stiffness"]
+    by_id("total-stiffness-x").textContent = format_number(total_x * factor)
+    by_id("total-stiffness-y").textContent = format_number(total_y * factor)
+    by_id("height-conversion").textContent = f"{_rigidity_level_name(level_index)}"
+    by_id("contribution-count").textContent = f"{len(dd_frames)} pórticos · {_rigidity_level_name(level_index).lower()}"
+    rows = []
+    for index, data in enumerate(dd_frames):
+        frame = data["frame"]
+        k = float(data["story_stiffness"][level_index]) if level_index < len(data["story_stiffness"]) else 0.0
+        direction_total = total_x if frame.direction == "X" else total_y
+        projected = k * (cos(radians(frame.beta)) ** 2 if frame.direction == "X" else sin(radians(frame.beta)) ** 2)
+        percent = projected / direction_total * 100.0 if direction_total > 0 else 0.0
+        rows.append(
+            f"""
+            <div class="contribution-row">
+              <div class="contribution-symbol"><span class="shape-symbol"></span></div>
+              <div class="contribution-main">
+                <div><strong>{escape(frame.label)}</strong><span>β = {format_number(frame.beta, 2)}° · {data['columns'][level_index] if level_index < len(data['columns']) else 0} columnas</span><em>{format_number(percent, 1)}% en {frame.direction}</em></div>
+                <div class="progress-track"><span style="width:{min(100.0, percent):.2f}%"></span></div>
+              </div>
+              <b>{format_number(k * factor)}<small>{labels['stiffness']}</small></b>
+            </div>
+            """
+        )
+    by_id("contribution-list").innerHTML = "".join(rows)
+    by_id("steps-list").innerHTML = "".join(_dd_frame_step(data, index) for index, data in enumerate(dd_frames))
+    if dd_error:
+        show_warning(dd_error)
+    else:
+        show_warning(None)
+
+
+def _transfer_loads_to_analysis() -> bool:
+    """Lleva fuerzas estáticas, masas y CM del metrado al análisis sin cambiar de etapa."""
+    global analysis_level_count, analysis_heights, analysis_forces, analysis_alpha
+    global analysis_stiffness_x, analysis_stiffness_y
+    global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
+    try:
+        assessment = _current_irregularity_assessment()
+        site = _build_site_params(assessment)
+        column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
+        result = static_seismic_forces(load_levels, site, column_weights)
+    except (ValueError, ZeroDivisionError) as error:
+        warning = by_id("loads-warning")
+        warning.hidden = False
+        warning.textContent = f"No se pudo aplicar al análisis: {error}"
+        return False
+    count = min(len(load_levels), 12)
+    analysis_level_count = count
+    analysis_heights = [level.height for level in load_levels[:count]]
+    analysis_forces = [result.level_forces[index] for index in range(count)]
+    analysis_stiffness_x = [level.stiffness_x_override for level in load_levels[:count]]
+    analysis_stiffness_y = [level.stiffness_y_override for level in load_levels[:count]]
+    level_masses = [
+        _level_seismic_mass_properties(level, column_takeoff_rows(level.height, index), loads_category)
+        for index, level in enumerate(load_levels[:count])
+    ]
+    total_mass = sum(item["mass"] for item in level_masses)
+    if total_mass > 0:
+        analysis_cm_x = sum(item["mass"] * item["center_x"] for item in level_masses) / total_mass
+        analysis_cm_y = sum(item["mass"] * item["center_y"] for item in level_masses) / total_mass
+    analysis_alpha = 0.0
+    average_plan_y = sum(
+        level_masses[index]["mass"] * load_levels[index].plan_y for index in range(count)
+    ) / total_mass if total_mass > 0 else load_levels[0].plan_y
+    analysis_ecc_x = 0.0
+    analysis_ecc_y = 0.05 * average_plan_y
+    return True
+
+
 def render_results() -> None:
+    if dd_active and dd_building is not None:
+        render_frame_diagram()
+        render_plan_diagram()
+        _dd_render_results()
+        return
     labels = unit_labels()
     by_id("stiffness-unit-x").textContent = labels["stiffness"]
     by_id("stiffness-unit-y").textContent = labels["stiffness"]
@@ -1867,7 +2440,7 @@ def render_analysis_inputs() -> None:
             f"""
             <article class="analysis-frame-row">
               <div class="analysis-frame-row__head">
-                <div><span class="column-code">C{index + 1}</span><strong>Eje {escape(str(group.axis))}</strong></div>
+                <div><span class="column-code">C{index + 1}</span><strong>{escape(_display_axis(group.axis))}</strong></div>
                 <div><span class="direction-chip">Base {group.direction}</span><small>{group.quantity} columna(s) · {shape_name(group.shape)}</small></div>
               </div>
               <div class="analysis-frame-fields">
@@ -2009,6 +2582,28 @@ def _local_matrix_development(frame: dict, levels: int, stiffness_unit: str) -> 
 
     axis = str(frame["axis"])
     axis_html = escape(axis)
+    condensed = any(group.id == frame["id"] and group.lateral_matrix is not None for group in groups)
+    if condensed:
+        numeric_only = [[_compact_number(value) for value in row] for row in frame["local_matrix"]]
+        k_text = " · ".join(f"{_compact_number(value)}" for value in frame["story_stiffnesses"])
+        return f"""
+      <div class="local-matrix-development">
+        <div class="local-matrix-title">
+          <div><strong>Pórtico {axis_html}: matriz lateral condensada</strong><span>Vigas y columnas a flexión, {levels} nivel{"es" if levels != 1 else ""}</span></div>
+          <span>{escape(stiffness_unit)}</span>
+        </div>
+        <p>K<sub>L</sub> = K<sub>uu</sub> − K<sub>uθ</sub>K<sub>θθ</sub><sup>−1</sup>K<sub>θu</sub>. Rigideces de entrepiso equivalentes: {k_text} {escape(stiffness_unit)}.</p>
+        <div class="local-matrix-equation-scroll">
+          <div class="local-matrix-equation">
+            <span class="matrix-name">[K<sub>L</sub>]<sub>{axis_html}</sub></span>
+            <span class="matrix-equals">=</span>
+            {_equation_matrix(numeric_only, f'Matriz lateral del pórtico {axis}')}
+            <span class="matrix-equation-unit">{escape(stiffness_unit)}</span>
+          </div>
+        </div>
+        <p class="local-matrix-note">A diferencia del modelo de corte, la matriz es llena: la flexibilidad de las vigas acopla todos los niveles.</p>
+      </div>
+    """
     symbolic = _local_matrix_symbolic(axis, levels)
     numeric = [[_compact_number(value) for value in row] for row in frame["local_matrix"]]
     k_values = " · ".join(
@@ -2113,7 +2708,7 @@ def _analysis_steps_html(result: dict) -> str:
             f"- ({format_number(frame['y0'], 3)} - {format_number(analysis_cm_y, 3)})·cos({format_number(frame['beta'], 1)}°) = {format_number(frame['lever_arm'], 4)} m"
         )
         step3_blocks.append(
-            f'<p class="step-axis-title">Eje {escape(str(frame["axis"]))}</p>'
+            f'<p class="step-axis-title">{escape(_display_axis(frame["axis"]))}</p>'
             f'<div class="step-formula">{escape(formula)}</div>'
             + _labeled_matrix_table(frame["transformation"], level_labels, dof_labels, "Nivel")
         )
@@ -2129,16 +2724,16 @@ def _analysis_steps_html(result: dict) -> str:
     intermediate = _matmul(selected_frame["local_matrix"], selected_frame["transformation"])
     contribution = _matmul(_transpose(selected_frame["transformation"]), intermediate)
     other_axes = ", ".join(
-        f"eje {escape(str(frame['axis']))} (r={format_number(frame['lever_arm'], 3)} m, k={_compact_number(frame['story_stiffnesses'][0])} {stiffness_unit})"
+        f"{escape(_display_axis(frame['axis']))} (r={format_number(frame['lever_arm'], 3)} m, k={_compact_number(frame['story_stiffnesses'][0])} {stiffness_unit})"
         for frame in frames if str(frame["id"]) != str(selected_frame["id"])
     )
     step4 = f"""
       <div class="step-block">
         <h4><span class="step-badge">4</span>Contribución de cada eje a la matriz global</h4>
         <p>Cada eje aporta con la transformación de congruencia <code>[K_eje]<sub>global</sub> = [G]<sup>T</sup>[K_eje][G]</code>. Se muestra el desarrollo completo del pórtico seleccionado.</p>
-        <p class="step-axis-title">Eje {escape(str(selected_frame["axis"]))} — producto [K_local]·[G]</p>
+        <p class="step-axis-title">{escape(_display_axis(selected_frame["axis"]))} — producto [K_local]·[G]</p>
         {_labeled_matrix_table(intermediate, level_labels, dof_labels, "Nivel")}
-        <p class="step-axis-title">Eje {escape(str(selected_frame["axis"]))} — [G]<sup>T</sup>·(anterior) = aporte a K global</p>
+        <p class="step-axis-title">{escape(_display_axis(selected_frame["axis"]))} — [G]<sup>T</sup>·(anterior) = aporte a K global</p>
         {_labeled_matrix_table(contribution, dof_labels, dof_labels, "GDL")}
         {f'<p class="step-note">Los demás ejes se procesan igual: {other_axes}.</p>' if other_axes else ""}
         <p class="step-axis-title">Matriz global ensamblada K<sub>P3D</sub> = Σ [G]<sup>T</sup>[K_eje][G]</p>
@@ -2500,7 +3095,7 @@ def render_deformation_views(result: dict) -> None:
 
     axis_options = "".join(
         f'<option value="{group.id}"{" selected" if group.id == analysis_selected_axis_id else ""}>'
-        f"Eje {escape(str(group.axis))} · {escape(direction_label(group.direction))}</option>"
+        f"{escape(_display_axis(group.axis))} · {escape(direction_label(group.direction))}</option>"
         for group in groups
     )
     by_id("analysis-elevation-axis").innerHTML = axis_options
@@ -2578,9 +3173,9 @@ def _analysis_level_masses() -> list[dict[str, float]]:
     if len(load_levels) != analysis_level_count:
         raise ValueError("Los niveles del metrado no coinciden con los del análisis.")
     masses = []
-    for level in load_levels:
+    for index, level in enumerate(load_levels):
         properties = _level_seismic_mass_properties(
-            level, column_takeoff_rows(level.height), loads_category
+            level, column_takeoff_rows(level.height, index), loads_category
         )
         mass = float(properties["mass"])
         if mass <= 0:
@@ -2839,7 +3434,13 @@ def render_analysis_results() -> None:
     warning = by_id("analysis-warning")
     warning.hidden = True
     warning.textContent = ""
-    by_id("analysis-plan").innerHTML = _analysis_plan_svg(result["center_rigidity"])
+    if dd_active and dd_building is not None:
+        markers = [(analysis_cm_x, analysis_cm_y, "CM", "cm")]
+        if result["center_rigidity"] is not None:
+            markers.append((result["center_rigidity"]["x"], result["center_rigidity"]["y"], "CR", "cr"))
+        by_id("analysis-plan").innerHTML = _dd_plan_svg(0, markers)
+    else:
+        by_id("analysis-plan").innerHTML = _analysis_plan_svg(result["center_rigidity"])
     displacements = result["displacements"]
     roof = displacements[-1]
     max_drift = max(
@@ -2876,7 +3477,7 @@ def render_analysis_results() -> None:
             moment = frame["end_moments"][level]
             moment_text = "—" if moment is None else format_number(moment, 3)
             frame_rows.append(
-                f"<tr><td>Eje {escape(str(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['lever_arms'][level], 3)}</td><td>{format_number(frame['story_shears'][level], 3)}</td><td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
+                f"<tr><td>{escape(_display_axis(frame['axis']))}</td><td>{level + 1}</td><td>{format_number(frame['lever_arms'][level], 3)}</td><td>{format_number(frame['story_shears'][level], 3)}</td><td>{format_number(frame['column_shears'][level], 3)}</td><td>{moment_text}</td></tr>"
             )
     by_id("analysis-frames").innerHTML = f"""
       <h3>Distribución de acciones por eje</h3>
@@ -2904,12 +3505,15 @@ def load_level_card(level: LevelLoad, index: int) -> str:
         for key, (label, _value) in LIVE_LOAD_PRESETS.items()
     )
     label_value = escape(str(level.label), quote=True)
-    columns = column_takeoff(level.height)
+    columns = column_takeoff(level.height, index)
     beam_volume, beam_weight = beam_takeoff(level)
-    story = calculate_story(groups, level.height, units)
-    stiffness_conversion = KN_PER_TONF if units == "MKS" else 1.0
-    automatic_kx = float(story["totals"]["X"]) * stiffness_conversion
-    automatic_ky = float(story["totals"]["Y"]) * stiffness_conversion
+    if dd_active and dd_building is not None:
+        automatic_kx, automatic_ky = _dd_story_totals(index)
+    else:
+        story = calculate_story(groups, level.height, units)
+        stiffness_conversion = KN_PER_TONF if units == "MKS" else 1.0
+        automatic_kx = float(story["totals"]["X"]) * stiffness_conversion
+        automatic_ky = float(story["totals"]["Y"]) * stiffness_conversion
     return f"""
     <article class="column-card load-level-card" data-card-id="{level.id}">
       <div class="column-card__head">
@@ -2932,7 +3536,7 @@ def load_level_card(level: LevelLoad, index: int) -> str:
       <div class="form-grid">
         <div class="field-block">
           <label for="load-area-{level.id}">Área tributaria</label>
-          <div class="input-with-unit"><input id="load-area-{level.id}" type="number" min="1" step="1" value="{input_number(level.area)}" data-level-id="{level.id}" data-field="load-area" /><span>m²</span></div>
+          <div class="input-with-unit"><input id="load-area-{level.id}" type="number" min="1" step="1" value="{input_number(level.area, 2)}" data-level-id="{level.id}" data-field="load-area" /><span>m²</span></div>
         </div>
         <div class="field-block">
           <label for="load-height-{level.id}">Altura de piso</label>
@@ -2942,7 +3546,7 @@ def load_level_card(level: LevelLoad, index: int) -> str:
       <div class="form-grid">
         <div class="field-block">
           <label for="load-cm-{level.id}">Carga muerta CM</label>
-          <div class="input-with-unit"><input id="load-cm-{level.id}" type="number" min="0" step="0.1" value="{input_number(level.cm)}" data-level-id="{level.id}" data-field="load-cm" /><span>kN/m²</span></div>
+          <div class="input-with-unit"><input id="load-cm-{level.id}" type="number" min="0" step="0.1" value="{input_number(level.cm, 3)}" data-level-id="{level.id}" data-field="load-cm" /><span>kN/m²</span></div>
           <small>Losa + acabados + tabiquería. No incluyas aquí columnas ni vigas.</small>
         </div>
         <div class="field-block">
@@ -2962,8 +3566,8 @@ def load_level_card(level: LevelLoad, index: int) -> str:
       <section class="mass-geometry-card" aria-labelledby="mass-geometry-{level.id}">
         <div><strong id="mass-geometry-{level.id}">Geometría de masa del nivel</strong><small>Centro de la losa y de las cargas superficiales</small></div>
         <div class="mass-geometry-fields">
-          <div class="field-block"><label for="load-center-x-{level.id}">Centro X₀</label><div class="input-with-unit"><input id="load-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.center_x)}" data-level-id="{level.id}" data-field="load-center-x" /><span>m</span></div></div>
-          <div class="field-block"><label for="load-center-y-{level.id}">Centro Y₀</label><div class="input-with-unit"><input id="load-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.center_y)}" data-level-id="{level.id}" data-field="load-center-y" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-center-x-{level.id}">Centro X₀</label><div class="input-with-unit"><input id="load-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.center_x, 3)}" data-level-id="{level.id}" data-field="load-center-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-center-y-{level.id}">Centro Y₀</label><div class="input-with-unit"><input id="load-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.center_y, 3)}" data-level-id="{level.id}" data-field="load-center-y" /><span>m</span></div></div>
           <div class="field-block"><label for="load-slab-thickness-{level.id}">Espesor de losa</label><div class="input-with-unit"><input id="load-slab-thickness-{level.id}" type="number" min="0" step="0.01" value="{input_number(level.slab_thickness)}" data-level-id="{level.id}" data-field="load-slab-thickness" /><span>m</span></div></div>
         </div>
         <small>CM incluye el peso de esta losa. El excedente se reporta como acabados y tabiquería.</small>
@@ -2975,8 +3579,8 @@ def load_level_card(level: LevelLoad, index: int) -> str:
           <span>0 en K usa el modelo · 0 en Vn deja sin evaluar</span>
         </div>
         <div class="irregularity-level-fields">
-          <div class="field-block"><label for="load-plan-x-{level.id}">Dimensión resistente X</label><div class="input-with-unit"><input id="load-plan-x-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_x)}" data-level-id="{level.id}" data-field="load-plan-x" /><span>m</span></div></div>
-          <div class="field-block"><label for="load-plan-y-{level.id}">Dimensión resistente Y</label><div class="input-with-unit"><input id="load-plan-y-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_y)}" data-level-id="{level.id}" data-field="load-plan-y" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-plan-x-{level.id}">Dimensión resistente X</label><div class="input-with-unit"><input id="load-plan-x-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_x, 3)}" data-level-id="{level.id}" data-field="load-plan-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-plan-y-{level.id}">Dimensión resistente Y</label><div class="input-with-unit"><input id="load-plan-y-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.plan_y, 3)}" data-level-id="{level.id}" data-field="load-plan-y" /><span>m</span></div></div>
           <div class="field-block"><label for="load-kx-{level.id}">Kx opcional</label><div class="input-with-unit"><input id="load-kx-{level.id}" type="number" min="0" step="100" value="{input_number(level.stiffness_x_override)}" data-level-id="{level.id}" data-field="load-kx" /><span>kN/m</span></div><small>Automática: <output id="load-kx-auto-{level.id}">{format_number(automatic_kx, 1)}</output> kN/m</small></div>
           <div class="field-block"><label for="load-ky-{level.id}">Ky opcional</label><div class="input-with-unit"><input id="load-ky-{level.id}" type="number" min="0" step="100" value="{input_number(level.stiffness_y_override)}" data-level-id="{level.id}" data-field="load-ky" /><span>kN/m</span></div><small>Automática: <output id="load-ky-auto-{level.id}">{format_number(automatic_ky, 1)}</output> kN/m</small></div>
           <div class="field-block"><label for="load-vnx-{level.id}">Resistencia Vn,x</label><div class="input-with-unit"><input id="load-vnx-{level.id}" type="number" min="0" step="10" value="{input_number(level.strength_x)}" data-level-id="{level.id}" data-field="load-vnx" /><span>kN</span></div></div>
@@ -2997,9 +3601,9 @@ def load_level_card(level: LevelLoad, index: int) -> str:
           <div class="field-block"><label for="load-beam-count-{level.id}">Cantidad de vigas</label><input id="load-beam-count-{level.id}" type="number" min="0" step="1" value="{level.beam_count}" data-level-id="{level.id}" data-field="load-beam-count" /></div>
           <div class="field-block"><label for="load-beam-width-{level.id}">Ancho b</label><div class="input-with-unit"><input id="load-beam-width-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_width)}" data-level-id="{level.id}" data-field="load-beam-width" /><span>m</span></div></div>
           <div class="field-block"><label for="load-beam-depth-{level.id}">Peralte h</label><div class="input-with-unit"><input id="load-beam-depth-{level.id}" type="number" min="0.05" step="0.05" value="{input_number(level.beam_depth)}" data-level-id="{level.id}" data-field="load-beam-depth" /><span>m</span></div></div>
-          <div class="field-block"><label for="load-beam-length-{level.id}">Longitud por viga</label><div class="input-with-unit"><input id="load-beam-length-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.beam_length)}" data-level-id="{level.id}" data-field="load-beam-length" /><span>m</span></div></div>
-          <div class="field-block"><label for="load-beam-center-x-{level.id}">Centro de vigas X₀</label><div class="input-with-unit"><input id="load-beam-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_x)}" data-level-id="{level.id}" data-field="load-beam-center-x" /><span>m</span></div></div>
-          <div class="field-block"><label for="load-beam-center-y-{level.id}">Centro de vigas Y₀</label><div class="input-with-unit"><input id="load-beam-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_y)}" data-level-id="{level.id}" data-field="load-beam-center-y" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-length-{level.id}">Longitud por viga</label><div class="input-with-unit"><input id="load-beam-length-{level.id}" type="number" min="0.1" step="0.1" value="{input_number(level.beam_length, 3)}" data-level-id="{level.id}" data-field="load-beam-length" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-center-x-{level.id}">Centro de vigas X₀</label><div class="input-with-unit"><input id="load-beam-center-x-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_x, 3)}" data-level-id="{level.id}" data-field="load-beam-center-x" /><span>m</span></div></div>
+          <div class="field-block"><label for="load-beam-center-y-{level.id}">Centro de vigas Y₀</label><div class="input-with-unit"><input id="load-beam-center-y-{level.id}" type="number" step="0.1" value="{input_number(level.beam_center_y, 3)}" data-level-id="{level.id}" data-field="load-beam-center-y" /><span>m</span></div></div>
         </div>
         <p class="element-takeoff-result">Vigas del nivel: <strong id="load-beams-summary-{level.id}">{level.beam_count} unid. · {format_number(beam_volume, 3)} m³ · {format_number(beam_weight, 1)} kN</strong></p>
       </section>
@@ -3045,7 +3649,7 @@ def _manual_irregularity_facts() -> IrregularityFacts:
 
 
 def _current_irregularity_assessment() -> dict[str, object]:
-    column_rows = [column_takeoff_rows(level.height) for level in load_levels]
+    column_rows = [column_takeoff_rows(level.height, index) for index, level in enumerate(load_levels)]
     column_weights = [sum(float(row["weight"]) for row in rows) for rows in column_rows]
     weights = [
         level_seismic_weight(level, loads_category, column_weights[index])
@@ -3298,12 +3902,12 @@ def _floor_takeoff_html(
     beam_row = f"""
       <tr><td>1</td><td>Vigas del nivel</td><td>{level.beam_count}</td>
       <td>{format_number(level.beam_length, 2)}</td><td>{format_number(level.beam_width, 3)}</td>
-      <td>{format_number(level.beam_depth, 3)}</td><td>{format_number(CONCRETE_UNIT_WEIGHT, 1)}</td>
+      <td>{format_number(level.beam_depth, 3)}</td><td>{format_number(loads_module.CONCRETE_UNIT_WEIGHT, 2)}</td>
       <td>{format_number(beam_volume, 3)}</td>{_mass_cells(beam_mass)}</tr>
     """
     slab_row = f"""
       <tr><td>1</td><td>Losa del nivel</td><td>{format_number(level.area, 2)}</td>
-      <td>{format_number(level.slab_thickness, 3)}</td><td>{format_number(CONCRETE_UNIT_WEIGHT, 1)}</td>
+      <td>{format_number(level.slab_thickness, 3)}</td><td>{format_number(loads_module.CONCRETE_UNIT_WEIGHT, 2)}</td>
       <td>{format_number(breakdown['slab_volume'], 3)}</td>{_mass_cells(slab_mass)}</tr>
     """
     other_dead_intensity = breakdown["other_surface_dead"] / level.area if level.area else 0.0
@@ -3342,7 +3946,7 @@ def _floor_takeoff_html(
           </section>
 
           <section class="takeoff-table-section">
-            <div><h4>Losa</h4><span>Peso propio calculado con γ = {format_number(CONCRETE_UNIT_WEIGHT, 1)} kN/m³</span></div>
+            <div><h4>Losa</h4><span>Peso propio calculado con γ = {format_number(loads_module.CONCRETE_UNIT_WEIGHT, 2)} kN/m³</span></div>
             <div class="table-scroll"><table class="data-table detailed-takeoff-table"><thead><tr><th>N°</th><th>Descripción</th><th>Área (m²)</th><th>Espesor (m)</th><th>γ (kN/m³)</th><th>Vol. (m³)</th><th>Peso (kN)</th><th>Masa (t)</th><th>X₀ (m)</th><th>Y₀ (m)</th><th>M·X (t·m)</th><th>M·Y (t·m)</th></tr></thead><tbody>{slab_row}</tbody><tfoot><tr><th colspan="5">Total losa</th><td>{format_number(breakdown['slab_volume'], 3)}</td><td>{format_number(slab_mass['weight'], 2)}</td><td>{format_number(slab_mass['mass'], 3)}</td><td>—</td><td>—</td><td>{format_number(slab_mass['mx'], 3)}</td><td>{format_number(slab_mass['my'], 3)}</td></tr></tfoot></table></div>
           </section>
 
@@ -3360,7 +3964,7 @@ def _floor_takeoff_html(
 def render_loads_results() -> None:
     global loads_ia, loads_ip
     warning = by_id("loads-warning")
-    column_rows_by_level = [column_takeoff_rows(level.height) for level in load_levels]
+    column_rows_by_level = [column_takeoff_rows(level.height, index) for index, level in enumerate(load_levels)]
     column_takeoffs = column_takeoffs_for_levels()
     column_weights = [float(item["weight"]) for item in column_takeoffs]
     for level, takeoff in zip(load_levels, column_takeoffs):
@@ -3533,6 +4137,9 @@ def configure_building_levels(levels: int, render: bool = True) -> None:
             slab.level_scope = str(max(0, min(int(slab.level_scope), target - 1)))
     sync_beams_to_load_levels()
     sync_slabs_to_load_levels()
+    if dd_active:
+        dd_rebuild(render=render)
+        return
 
     if render:
         render_beams()
@@ -3553,44 +4160,8 @@ def add_load_level() -> None:
 
 def apply_loads_to_analysis() -> None:
     """Copia el peso sísmico calculado hacia la Etapa 3 (Análisis)."""
-    global analysis_level_count, analysis_heights, analysis_forces, analysis_alpha
-    global analysis_stiffness_x, analysis_stiffness_y
-    global analysis_cm_x, analysis_cm_y, analysis_ecc_x, analysis_ecc_y
-    try:
-        assessment = _current_irregularity_assessment()
-        site = _build_site_params(assessment)
-        column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
-        result = static_seismic_forces(load_levels, site, column_weights)
-    except (ValueError, ZeroDivisionError) as error:
-        warning = by_id("loads-warning")
-        warning.hidden = False
-        warning.textContent = f"No se pudo aplicar al análisis: {error}"
+    if not _transfer_loads_to_analysis():
         return
-    count = min(len(load_levels), 12)
-    analysis_level_count = count
-    analysis_heights = [level.height for level in load_levels[:count]]
-    analysis_forces = [result.level_forces[index] for index in range(count)]
-    analysis_stiffness_x = [
-        level.stiffness_x_override for level in load_levels[:count]
-    ]
-    analysis_stiffness_y = [
-        level.stiffness_y_override for level in load_levels[:count]
-    ]
-    level_rows = [column_takeoff_rows(level.height) for level in load_levels[:count]]
-    level_masses = [
-        _level_seismic_mass_properties(level, level_rows[index], loads_category)
-        for index, level in enumerate(load_levels[:count])
-    ]
-    total_mass = sum(item["mass"] for item in level_masses)
-    if total_mass > 0:
-        analysis_cm_x = sum(item["mass"] * item["center_x"] for item in level_masses) / total_mass
-        analysis_cm_y = sum(item["mass"] * item["center_y"] for item in level_masses) / total_mass
-    analysis_alpha = 0.0
-    average_plan_y = sum(
-        level_masses[index]["mass"] * load_levels[index].plan_y for index in range(count)
-    ) / total_mass if total_mass > 0 else load_levels[0].plan_y
-    analysis_ecc_x = 0.0
-    analysis_ecc_y = 0.05 * average_plan_y
     render_analysis_inputs()
     render_analysis_results()
     set_stage("analysis")
@@ -3921,6 +4492,10 @@ def reset() -> None:
     global loads_ia, loads_ip, loads_period_mode, loads_period_manual
     global loads_discontinuity_vertical, loads_extreme_discontinuity_vertical
     global loads_reentrant_corners, loads_diaphragm_discontinuity, loads_nonparallel_systems
+    global dd_active, dd_building, dd_frames, dd_takeoffs, dd_error
+    dd_active = False
+    dd_building, dd_frames, dd_takeoffs, dd_error = None, [], [], ""
+    loads_module.CONCRETE_UNIT_WEIGHT = CONCRETE_UNIT_WEIGHT
     units = "SI"
     story_height = 3.0
     next_group_number = 2
@@ -3955,6 +4530,7 @@ def reset() -> None:
     by_id("story-height").value = "3"
     sync_beams_to_load_levels()
     sync_slabs_to_load_levels()
+    render_dd_panel()
     render_model_geometry_inputs()
     render_beams()
     render_slabs()
@@ -4077,9 +4653,21 @@ def handle_input(event):
     if field is None:
         return
     field = str(field)
+    if field == "dd-param":
+        key = str(target.getAttribute("data-key"))
+        if key in DD_PARAM_FIELDS:
+            value = parse_number(target.value, getattr(dd_params, key))
+            minimum = 0.0 if key in ("finishes", "partitions") else 1e-6
+            if value >= minimum:
+                setattr(dd_params, key, value)
+                dd_rebuild()
+        return
     if field == "plan-length":
         index = int(str(target.getAttribute("data-index")))
         plan_span_lengths[index] = max(0.5, parse_number(target.value, plan_span_lengths[index]))
+        if dd_active:
+            dd_rebuild()
+            return
         sync_model_geometry_to_levels()
         sync_beams_to_load_levels()
         sync_slabs_to_load_levels()
@@ -4096,6 +4684,9 @@ def handle_input(event):
             plan_angle_a = None if not raw_value else max(1.0, min(179.0, parse_number(raw_value, 85.2)))
         else:
             plan_angle_b = None if not raw_value else max(-45.0, min(45.0, parse_number(raw_value, 7.0)))
+        if dd_active:
+            dd_rebuild()
+            return
         sync_model_geometry_to_levels()
         render_plan_diagram()
         render_loads_results()
@@ -4138,6 +4729,12 @@ def handle_input(event):
         render_analysis_results()
         return
     if field == "story-height":
+        if dd_active:
+            value = parse_number(target.value, dd_params.H2)
+            if value > 0:
+                dd_params.H2 = value
+                dd_rebuild()
+            return
         story_height = parse_number(target.value)
         for level in load_levels:
             level.height = story_height
@@ -4148,6 +4745,15 @@ def handle_input(event):
         return
     if field == "analysis-height":
         level = int(str(target.getAttribute("data-level")))
+        if dd_active:
+            value = parse_number(target.value, 0.0)
+            if value > 0:
+                if level == 0:
+                    dd_params.H1 = value
+                else:
+                    dd_params.H2 = value
+                dd_rebuild(skip=("analysis",))
+            return
         analysis_heights[level] = parse_number(target.value)
         render_analysis_results()
         return
@@ -4234,6 +4840,13 @@ def handle_input(event):
             setattr(level, attribute, parse_number(target.value))
             if field == "load-height":
                 level_index = load_levels.index(level)
+                if dd_active and level.height > 0:
+                    if level_index == 0:
+                        dd_params.H1 = level.height
+                    else:
+                        dd_params.H2 = level.height
+                    dd_rebuild(skip=("levels",))
+                    return
                 if level_index < len(analysis_heights):
                     analysis_heights[level_index] = level.height
         if field in ("load-beam-count", "load-beam-width", "load-beam-depth", "load-beam-length"):
@@ -4360,11 +4973,25 @@ def handle_change(event):
         return
     if field == "loads-use-global":
         loads_use_preset = str(target.value)
+        category = use_category(loads_use_preset)
+        if category:
+            loads_category = category
         for level in load_levels:
             level.use_key = "azotea_no_transitable" if level.is_roof else loads_use_preset
             level.cv = live_load_preset(level.use_key)
+        if dd_active:
+            dd_rebuild()
+            return
         render_load_levels()
+        render_loads_site_inputs()
         render_loads_results()
+        return
+    if field == "dd-group":
+        value = str(target.value)
+        if value == "libre":
+            deactivate_dd()
+        else:
+            activate_dd(int(value))
         return
     if field == "loads-period-mode":
         global loads_period_mode
@@ -4414,6 +5041,7 @@ def handle_change(event):
 
 
 def initialize() -> None:
+    render_dd_panel()
     render_model_geometry_inputs()
     render_unit_toggle()
     render_groups()
