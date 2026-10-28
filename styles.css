@@ -700,8 +700,8 @@ fieldset.field-block + fieldset.field-block, .column-card > .shape-field { margi
   .topbar-crumbs { padding-left: 10px; font-size: 12px; }
   .topbar-crumbs .crumb-sep, .topbar-crumbs #topbar-stage { display: none; }
   .header-actions { gap: 4px; }
-  .reset-button span, .run-button span { display: none; }
-  .reset-button, .run-button { width: 34px; padding: 0; }
+  .reset-button span, .run-button span, .excel-button span { display: none; }
+  .reset-button, .run-button, .excel-button { width: 34px; padding: 0; }
   .unit-toggle button { padding: 0 7px; }
   .stage-switcher { position: fixed; z-index: 50; left: 0; right: 0; bottom: 0; height: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); flex-direction: row; justify-content: space-around; gap: 2px; padding: 4px 6px env(safe-area-inset-bottom); background: rgba(16,21,28,.96); backdrop-filter: blur(10px); border-right: 0; border-top: 1px solid var(--rule); }
   .stage-tab { flex: 1 1 0; padding: 5px 2px; }
@@ -869,3 +869,6 @@ input:disabled, select:disabled { color: var(--ink-3); background: var(--sheet-a
 .analysis-stage { min-height: 0; }
 .spec-chart svg { max-width: 920px; margin-inline: auto; }
 .example-field .example-button { min-height: 32px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.excel-button { color: #7ee0a8; border-color: rgba(63,214,138,.45); background: rgba(63,214,138,.08); }
+.excel-button:hover { color: #b4f2cc; border-color: var(--ok); background: rgba(63,214,138,.16); }
