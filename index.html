@@ -40,6 +40,9 @@
             <button class="button button-ghost reset-button" type="button" data-action="reset" title="Volver al modelo inicial">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10a6 6 0 1 0 1.8-4.3M4 3.5v3.6h3.6" /></svg><span>Reiniciar</span>
             </button>
+            <button id="export-excel-button" class="button excel-button" type="button" data-action="export-excel" title="Descarga la memoria de cálculo en Excel (fórmulas, MKS)">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z" /><path d="M12 2.5V6h3.5" /><path d="M7.5 9.5l4 5M11.5 9.5l-4 5" /></svg><span>Excel</span>
+            </button>
             <button class="button button-primary run-button" type="button" data-action="apply-loads" title="Pasa fuerzas y masas del metrado al análisis y lo resuelve">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.5v11l9-5.5z" /></svg><span>Analizar</span>
             </button>
@@ -584,6 +587,10 @@
               <div id="analysis-steps" class="steps-scroll"></div>
             </div>
             <section class="stage-foot">
+              <div class="next-step">
+                <p>Descarga la memoria de cálculo en Excel con la estructura del trabajo del curso: rigidez, masa, análisis sísmico, centros de masa y rigidez, matrices G·K·G, K⁻¹, desplazamientos, modos y espectro, con fórmulas vivas en tonf y m.</p>
+                <button class="button button-primary transition-button" type="button" data-action="export-excel">Descargar Excel</button>
+              </div>
               <details class="theory-section analysis-method">
                 <summary>Ruta matricial y alcance del análisis</summary>
                 <ol class="analysis-method-grid">

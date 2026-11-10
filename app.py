@@ -26,6 +26,7 @@ from stiffness import (
     calculate_group,
     calculate_story,
     convert_group_units,
+    elastic_modulus,
     direction_label,
     material_label,
     resistance_bounds,
@@ -34,7 +35,10 @@ from stiffness import (
     _transpose,
 )
 from loads import (
+    BASE_PERIOD_CT,
+    BASIC_R,
     CATEGORY_CV_FACTOR,
+    STRUCTURAL_SYSTEM_LABELS,
     CONCRETE_UNIT_WEIGHT,
     GRAVITY_ACCELERATION,
     LIVE_LOAD_PRESETS,
@@ -4524,18 +4528,18 @@ def _spectral_sa(period: float, site: dict[str, float]) -> float | None:
     return row["PSa"]
 
 
-def render_spectral_analysis(result: dict, modal: dict | None, masses: list | None) -> None:
-    container = by_id("analysis-spectral")
+def spectral_analysis_data(result: dict, modal: dict | None, masses: list | None) -> dict:
+    """Análisis modal espectral (E.030, art. 29) para X e Y; kN, m.
+
+    Devuelve {"error": texto} si faltan datos, o los resultados por dirección.
+    """
     if modal is None or masses is None:
-        container.innerHTML = '<p class="matrix-caption">El análisis espectral usa los modos del análisis modal; completa el metrado para obtenerlos.</p>'
-        return
+        return {"error": "El análisis espectral usa los modos del análisis modal; completa el metrado para obtenerlos."}
     site = _spec_site()
     if site is None:
-        container.innerHTML = '<p class="matrix-caption">Corrige el metrado (Etapa 2) para obtener Z, U, S, R y la cortante estática.</p>'
-        return
+        return {"error": "Corrige el metrado (Etapa 2) para obtener Z, U, S, R y la cortante estática."}
     if spectral_source == "record" and not spec_results:
-        container.innerHTML = '<p class="matrix-caption">Carga un registro y calcula sus espectros en la etapa Espectros para usarlo aquí.</p>'
-        return
+        return {"error": "Carga un registro y calcula sus espectros en la etapa Espectros para usarlo aquí."}
     modes = modal["modes"]
     mass_matrix = modal["mass_matrix"]
     levels = result["levels"]
@@ -4543,14 +4547,13 @@ def render_spectral_analysis(result: dict, modal: dict | None, masses: list | No
     amplification = (0.75 if site["regular"] else 0.85) * site["r"]
     limit = 0.005 if loads_system == "albanileria" else 0.007
     minimum_ratio = 0.80 if site["regular"] else 0.90
-    blocks = []
-    summary = []
+    directions = []
     for direction, offset, key in (("X", 0, "X"), ("Y", 1, "Y")):
         omegas, base_shears, displacement_modes, drift_modes, shear_modes, mode_rows = [], [], [], [], [], []
-        for index, mode in enumerate(modes):
+        for mode in modes:
             sa = _spectral_sa(mode["period"], site)
             if sa is None:
-                return
+                return {"error": "No se pudo obtener Sa del espectro elegido."}
             gamma = mode["participation"][key]
             factor = gamma * sa / mode["omega"] ** 2
             q = [value * factor for value in mode["shape"]]
@@ -4563,29 +4566,80 @@ def render_spectral_analysis(result: dict, modal: dict | None, masses: list | No
             drift_modes.append(drifts)
             shear_modes.append(shears)
             base_shears.append(shears[0])
-            mode_rows.append(
-                f"<tr><td>{index + 1}</td><td>{format_number(mode['period'], 4)}</td><td>{format_number(sa / spectra_module.G, 4)}</td>"
-                f"<td>{format_number(gamma, 3)}</td><td>{format_number(mode['mass_ratio'][key] * 100, 2)}</td><td>{format_number(shears[0], 1)}</td></tr>"
-            )
+            mode_rows.append({"period": mode["period"], "sa": sa, "gamma": gamma, "ratio": mode["mass_ratio"][key], "base_shear": shears[0]})
         combine = lambda values: _combine(values, omegas, spectral_combination)
         v_dyn = combine(base_shears)
         v_min = minimum_ratio * site["V"]
         scale = max(1.0, v_min / v_dyn) if v_dyn > 0 else 1.0
         level_rows = []
-        worst = 0.0
-        for level in range(levels - 1, -1, -1):
+        for level in range(levels):
             u = combine([m[level] for m in displacement_modes])
             drift = combine([m[level] for m in drift_modes])
             shear = combine([m[level] for m in shear_modes])
-            inelastic = amplification * drift
-            worst = max(worst, inelastic)
-            verdict = "Cumple" if inelastic <= limit else "No cumple"
-            css = "is-regular" if inelastic <= limit else "is-irregular"
             level_rows.append(
-                f"<tr><td>{escape(load_levels[level].label if level < len(load_levels) else f'Nivel {level + 1}')}</td>"
-                f"<td>{format_number(shear * scale, 1)}</td><td>{format_number(u * 1000, 2)}</td><td>{format_number(amplification * u * 1000, 2)}</td>"
-                f"<td>{format_number(drift * 1000, 3)}</td><td>{format_number(inelastic * 1000, 2)}</td><td class=\"irregularity-state {css}\">{verdict}</td></tr>"
+                {
+                    "label": load_levels[level].label if level < len(load_levels) else f"Nivel {level + 1}",
+                    "shear": shear * scale,
+                    "u": u,
+                    "u_inelastic": amplification * u,
+                    "drift": drift,
+                    "drift_inelastic": amplification * drift,
+                    "ok": amplification * drift <= limit,
+                }
             )
+        directions.append(
+            {
+                "direction": direction,
+                "modes": mode_rows,
+                "v_dyn": v_dyn,
+                "v_static": site["V"],
+                "v_min": v_min,
+                "minimum_ratio": minimum_ratio,
+                "scale": scale,
+                "levels": level_rows,
+                "worst": max(row["drift_inelastic"] for row in level_rows),
+            }
+        )
+    return {
+        "site": site,
+        "amplification": amplification,
+        "regular": site["regular"],
+        "limit": limit,
+        "source": spectral_source,
+        "combination": spectral_combination,
+        "directions": directions,
+    }
+
+
+def render_spectral_analysis(result: dict, modal: dict | None, masses: list | None) -> None:
+    container = by_id("analysis-spectral")
+    data = spectral_analysis_data(result, modal, masses)
+    if "error" in data:
+        container.innerHTML = f'<p class="matrix-caption">{escape(data["error"])}</p>'
+        return
+    site = data["site"]
+    amplification = data["amplification"]
+    limit = data["limit"]
+    blocks = []
+    summary = []
+    for item in data["directions"]:
+        direction = item["direction"]
+        v_dyn, scale, minimum_ratio = item["v_dyn"], item["scale"], item["minimum_ratio"]
+        mode_rows = [
+            f"<tr><td>{index + 1}</td><td>{format_number(row['period'], 4)}</td><td>{format_number(row['sa'] / spectra_module.G, 4)}</td>"
+            f"<td>{format_number(row['gamma'], 3)}</td><td>{format_number(row['ratio'] * 100, 2)}</td><td>{format_number(row['base_shear'], 1)}</td></tr>"
+            for index, row in enumerate(item["modes"])
+        ]
+        level_rows = []
+        for row in reversed(item["levels"]):
+            css = "is-regular" if row["ok"] else "is-irregular"
+            verdict = "Cumple" if row["ok"] else "No cumple"
+            level_rows.append(
+                f"<tr><td>{escape(row['label'])}</td>"
+                f"<td>{format_number(row['shear'], 1)}</td><td>{format_number(row['u'] * 1000, 2)}</td><td>{format_number(row['u_inelastic'] * 1000, 2)}</td>"
+                f"<td>{format_number(row['drift'] * 1000, 3)}</td><td>{format_number(row['drift_inelastic'] * 1000, 2)}</td><td class=\"irregularity-state {css}\">{verdict}</td></tr>"
+            )
+        worst = item["worst"]
         summary.append(
             f'<div class="analysis-metric"><span>Cortante dinámica V<sub>{direction}</sub></span><strong>{format_number(v_dyn, 1)}</strong>'
             f'<small>kN · {format_number(100 * v_dyn / site["V"], 1)} % de la estática</small></div>'
@@ -4608,17 +4662,15 @@ def render_spectral_analysis(result: dict, modal: dict | None, masses: list | No
             <div class="table-scroll" style="margin-top:10px"><table class="data-table"><thead><tr><th>Nivel</th><th>V piso (kN)</th><th>u elástico (mm)</th><th>u = {format_number(amplification, 2)}·u (mm)</th><th>Deriva elástica (‰)</th><th>Deriva inelástica (‰)</th><th>E.030</th></tr></thead><tbody>{''.join(level_rows)}</tbody></table></div>
             """
         )
-    source = "espectro E.030 de diseño" if spectral_source == "e030" else "espectro del registro cargado dividido entre R"
-    rule = "CQC con ξ = 5 %" if spectral_combination == "cqc" else "0,25Σ|r| + 0,75√Σr²"
+    source = "espectro E.030 de diseño" if data["source"] == "e030" else "espectro del registro cargado dividido entre R"
+    rule = "CQC con ξ = 5 %" if data["combination"] == "cqc" else "0,25Σ|r| + 0,75√Σr²"
     container.innerHTML = (
         f'<div class="analysis-summary modal-summary">{"".join(summary)}</div>'
         f'<p class="matrix-caption">Sa(T<sub>n</sub>) del {source}; combinación {rule}; R = {format_number(site["r"], 2)}; '
-        f'desplazamientos inelásticos con {format_number(amplification, 2)} = {"0,75" if site["regular"] else "0,85"}·R (art. 50). '
+        f'desplazamientos inelásticos con {format_number(amplification, 2)} = {"0,75" if data["regular"] else "0,85"}·R (art. 50). '
         "Las derivas se combinan modo a modo (no a partir de los desplazamientos combinados) y se evalúan en el centro de masa; con torsión, revisa también los bordes.</p>"
         + "".join(blocks)
     )
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -4653,6 +4705,321 @@ def render_status_bar() -> None:
     bar = by_id("status-bar")
     bar.classList.toggle("is-error", has_error)
     by_id("status-state").textContent = "Revisar datos" if has_error else "Listo"
+
+
+# ---------------------------------------------------------------------------
+# Exportación de la memoria de cálculo a Excel (estructura del trabajo del curso)
+# ---------------------------------------------------------------------------
+
+def _excel_gravity() -> float:
+    """Factor kN → tonf (1 tonf = 9,80665 kN). La masa del libro usa g = GRAVITY_ACCELERATION."""
+    return KN_PER_TONF
+
+
+def _run_pseudo3d(forces: list[float] | None = None, alpha: float | None = None) -> dict:
+    return analyze_pseudotridimensional(
+        groups,
+        analysis_heights,
+        analysis_forces if forces is None else forces,
+        analysis_alpha if alpha is None else alpha,
+        analysis_cm_x,
+        analysis_cm_y,
+        analysis_ecc_x,
+        analysis_ecc_y,
+        units,
+        {"X": analysis_stiffness_x, "Y": analysis_stiffness_y},
+    )
+
+
+def _block_order(vector: list[float], n: int) -> list[float]:
+    """[ux1, uy1, θ1, ux2, …] → [ux1…uxn, uy1…uyn, θ1…θn]."""
+    return [vector[3 * level + component] for component in range(3) for level in range(n)]
+
+
+def _mass_rows_for_excel(index: int, level: LevelLoad) -> list[dict[str, object]]:
+    kn_to_tf = 1.0 / _excel_gravity()
+    gamma = float(loads_module.CONCRETE_UNIT_WEIGHT)
+    column_rows = column_takeoff_rows(level.height, index)
+    breakdown = level_gravity_breakdown(level, sum(float(row["weight"]) for row in column_rows))
+    live_factor = ROOF_CV_FACTOR if level.is_roof else CATEGORY_CV_FACTOR.get(loads_category, 0.25)
+    rows = []
+    for row in column_rows:
+        b = float(row["dimension"])
+        shape = str(row["shape"]).lower()
+        if dd_active:
+            depth = float(dd_params.column_by)
+        elif "circ" in shape:
+            depth = pi * b / 4.0
+        else:
+            depth = b
+        rows.append({
+            "name": f"COLUMNA {row['number']}",
+            "h": float(row["height"]), "b": b, "l": depth, "n": int(row["quantity"]),
+            "pu": float(row["unit_weight"]) * kn_to_tf, "x": float(row["x"]), "y": float(row["y"]),
+            "note": str(row["description"]) + (" · LARGO = π·D/4" if "circ" in shape else ""),
+        })
+    area = float(level.area)
+    if breakdown["beam_volume"] > 0:
+        count = max(1, int(level.beam_count))
+        depth = float(level.beam_depth) or 1.0
+        width = float(level.beam_width) or 1.0
+        rows.append({
+            "name": "VIGAS", "h": depth, "b": width, "l": breakdown["beam_volume"] / (depth * width * count), "n": count,
+            "pu": gamma * kn_to_tf, "x": float(level.beam_center_x), "y": float(level.beam_center_y),
+            "note": "ALTURA = parte descolgada h − e · LARGO = longitud media por viga" if dd_active else "LARGO = longitud media por viga",
+        })
+    if breakdown["slab_volume"] > 0:
+        rows.append({
+            "name": "LOSA", "h": breakdown["slab_volume"] / area, "b": area, "l": 1.0, "n": 1,
+            "pu": gamma * kn_to_tf, "x": float(level.center_x), "y": float(level.center_y),
+            "note": "ALTURA = espesor · ANCHO = área neta (m²)",
+        })
+    if breakdown["other_surface_dead"] > 0:
+        rows.append({
+            "name": "ACABADOS + TABIQUERÍA" if dd_active else "CM ADICIONAL", "h": 1.0, "b": area, "l": 1.0, "n": 1,
+            "pu": breakdown["other_surface_dead"] / area * kn_to_tf, "x": float(level.center_x), "y": float(level.center_y),
+            "note": "P.U en tonf/m² · ANCHO = área (m²)",
+        })
+    if breakdown["live_total"] > 0:
+        rows.append({
+            "name": "CARGA VIVA", "h": 1.0, "b": area, "l": 1.0, "n": live_factor,
+            "pu": float(level.cv) * kn_to_tf, "x": float(level.center_x), "y": float(level.center_y),
+            "note": f"P.U = CV en tonf/m² · CANT = {int(round(live_factor * 100))} % (E.030 art. 26)",
+        })
+    return rows
+
+
+def _excel_report_data() -> dict:
+    """Reúne los datos del modelo en tonf y m para excel_report.build_workbook."""
+    if not load_levels:
+        raise ValueError("Agrega al menos un nivel antes de exportar.")
+    if len(load_levels) != analysis_level_count:
+        raise ValueError("Los niveles del metrado no coinciden con los del análisis.")
+    kn_to_tf = 1.0 / _excel_gravity()
+    assessment = _current_irregularity_assessment()
+    site = _build_site_params(assessment)
+    column_weights = [float(item["weight"]) for item in column_takeoffs_for_levels()]
+    static = static_seismic_forces(load_levels, site, column_weights)
+    n = len(load_levels)
+    result = _run_pseudo3d()
+    result_x = _run_pseudo3d(static.level_forces, 0.0)
+    result_y = _run_pseudo3d(static.level_forces, 90.0)
+    modal, masses, _modal_error = _compute_modal(result)
+    spectral = spectral_analysis_data(result, modal, masses) if modal is not None else {"error": "sin modos"}
+    rigid = bool(dd_active and dd_params.stiffness_model == "rigid")
+
+    frames = []
+    group_by_id = {group.id: group for group in groups}
+    for frame_result in result["frames"]:
+        group = group_by_id.get(frame_result["id"])
+        if group is None:
+            continue
+        dimension_m = group.dimension / (1_000.0 if units == "SI" else 100.0)
+        if dd_active:
+            inertia = dd.column_inertia_for(dd_params, float(group.beta))
+        elif group.shape == "square":
+            inertia = dimension_m**4 / 12.0
+        else:
+            inertia = pi * dimension_m**4 / 64.0
+        columns = list(group.level_quantities) if group.level_quantities else [int(group.quantity)] * n
+        frames.append({
+            "label": _display_axis(str(group.axis)),
+            "beta": float(group.beta),
+            "x0": float(group.x0),
+            "y0": float(group.y0),
+            "direction": group.direction,
+            "inertia": inertia,
+            "columns": [int(value) for value in columns[:n]] + [0] * max(0, n - len(columns)),
+            "story_k": [value * kn_to_tf for value in frame_result["story_stiffnesses"]],
+            "matrix": [[value * kn_to_tf for value in row] for row in frame_result["local_matrix"]],
+            "rigid": rigid,
+        })
+
+    sum_k = {"X": [0.0] * n, "Y": [0.0] * n}
+    for frame in frames:
+        for level in range(n):
+            sum_k[frame["direction"]][level] += frame["story_k"][level]
+
+    levels = [
+        {"label": level.label, "height": float(level.height), "plan_x": float(level.plan_x), "plan_y": float(level.plan_y)}
+        for level in load_levels
+    ]
+    if dd_active:
+        p = dd_params
+        params = {
+            "E": p.E_tcm2 * 1.0e4,
+            "gamma": p.gamma_tm3,
+            "spans": {"L1": p.L1, "L2": p.L2, "L3": p.L3, "L4": p.L4},
+            "sections": [
+                ("column", "Columna (bx × by)", p.column_bx, p.column_by, "bx en X, by en Y"),
+                ("beam", "Viga (b × h)", p.beam_b, p.beam_h, ""),
+                ("slab_floor", "Losa maciza de pisos", None, p.slab_floor, "espesor"),
+                ("slab_roof", "Losa maciza de techo", None, p.slab_roof, "espesor"),
+            ],
+        }
+        site_text = str(by_id("dd-site").textContent or "")
+        project = f"Proyecto DD · Grupo {p.group}"
+        model_text = f"DD · Grupo {p.group} · {n} niveles"
+        stiffness_text = "Vigas infinitamente rígidas · columnas con altura libre h − h viga" if rigid else "Pórtico con vigas flexibles · condensación estática"
+    else:
+        moduli = [elastic_modulus(group.material, group.fc, units, group.modulus) for group in groups] if groups else [0.0]
+        modulus_kn = moduli[0] * (1_000.0 if units == "SI" else KN_PER_TONF * 10.0)
+        params = {"E": modulus_kn * kn_to_tf, "gamma": float(loads_module.CONCRETE_UNIT_WEIGHT) * kn_to_tf, "spans": None, "sections": []}
+        site_text = f"Zona {loads_zone} · suelo {loads_soil}"
+        project = "Modelo libre"
+        model_text = f"Modelo libre · {n} niveles · {len(groups)} grupos de columnas"
+        stiffness_text = "Rigidez por grupo de columnas (k = n·c·E·I/h³)"
+    params.update({"g": GRAVITY_ACCELERATION, "xi": 0.05})
+
+    use_label = LIVE_LOAD_PRESETS.get(loads_use_preset, (loads_use_preset, 0.0))[0]
+    regular = float(assessment["ia"]) == 1.0 and float(assessment["ip"]) == 1.0
+    spectral_tf = None
+    if "error" not in spectral:
+        spectral_tf = {
+            "source": spectral["source"],
+            "combination": spectral["combination"],
+            "amplification": spectral["amplification"],
+            "directions": [
+                {
+                    "direction": item["direction"],
+                    "modes": [{**mode, "base_shear": mode["base_shear"] * kn_to_tf} for mode in item["modes"]],
+                    "v_dyn": item["v_dyn"] * kn_to_tf,
+                    "v_static": item["v_static"] * kn_to_tf,
+                    "scale": item["scale"],
+                    "levels": [{**row, "shear": row["shear"] * kn_to_tf} for row in item["levels"]],
+                }
+                for item in spectral["directions"]
+            ],
+        }
+    modal_data = None
+    if modal is not None:
+        modal_data = {
+            "modes": [
+                {
+                    "T": mode["period"], "f": mode["frequency"], "omega": mode["omega"],
+                    "gamma": mode["participation"], "ratio": mode["mass_ratio"], "cum": mode["cumulative"],
+                    "dominant": mode["dominant"], "shape": _block_order(mode["shape"], n),
+                }
+                for mode in modal["modes"]
+            ]
+        }
+    global_matrix = result["global_matrix"]
+    order = [3 * level + component for component in range(3) for level in range(n)]
+    cr = result.get("center_rigidity")
+    return {
+        "meta": {
+            "project": project,
+            "model": model_text,
+            "use": f"{use_label} · categoría {loads_category}",
+            "site": site_text,
+            "stiffness_model": stiffness_text,
+            "date": _today_text(),
+            "note": "Generado con SismoLab (https://casvilluis-afk.github.io/Sismolab-rigidez/).",
+        },
+        "params": params,
+        "levels": levels,
+        "frames": frames,
+        "rigid_formula": rigid,
+        "mass": [{"label": level.label, "rows": _mass_rows_for_excel(index, level)} for index, level in enumerate(load_levels)],
+        "seismic": {
+            "zone": loads_zone, "Z": static.z, "category": loads_category, "U": static.u,
+            "soil": loads_soil, "S": static.s, "Tp": static.tp, "Tl": static.tl,
+            "system": STRUCTURAL_SYSTEM_LABELS.get(loads_system, loads_system),
+            "R0": BASIC_R.get(loads_system, 6.0), "Ia": float(assessment["ia"]), "Ip": float(assessment["ip"]),
+            "CT": BASE_PERIOD_CT.get(loads_system, 45.0),
+            "period_manual": loads_period_manual if loads_period_mode == "manual" else None,
+        },
+        "analysis": {
+            "cm": (analysis_cm_x, analysis_cm_y),
+            "ecc": (analysis_ecc_x, analysis_ecc_y),
+            "regular": regular,
+            "drift_limit": 0.005 if loads_system == "albanileria" else 0.007,
+        },
+        "modal": modal_data,
+        "spectral": spectral_tf,
+        "record_spectra": {SPEC_SHORT[name]: rows for name, rows in spec_results.items()} or None,
+        "check": {
+            "P_tf": [value * kn_to_tf for value in static.level_weights],
+            "V_tf": static.base_shear * kn_to_tf,
+            "F_tf": [value * kn_to_tf for value in static.level_forces],
+            "CR": (cr["x"], cr["y"]) if cr else None,
+            "K_tf": [[global_matrix[i][j] * kn_to_tf for j in order] for i in order],
+            "U_X": _block_order(result_x["displacement_vector"], n),
+            "U_Y": _block_order(result_y["displacement_vector"], n),
+            "sum_k_x": sum_k["X"],
+            "sum_k_y": sum_k["Y"],
+        },
+    }
+
+
+def _today_text() -> str:
+    from datetime import date
+
+    return date.today().strftime("%d/%m/%Y")
+
+
+def _excel_file_name() -> str:
+    if dd_active:
+        return f"SismoLab_DD_Grupo{dd_params.group}_{len(load_levels)}pisos.xlsx"
+    return f"SismoLab_modelo_{len(load_levels)}niveles.xlsx"
+
+
+def _download_bytes(content: bytes, file_name: str, mime: str) -> None:
+    from pyodide.ffi import create_once_callable, to_js
+    from pyscript import window
+
+    buffer = window.Uint8Array.new(len(content))
+    buffer.assign(content)
+    options = to_js({"type": mime}, dict_converter=window.Object.fromEntries)
+    blob = window.Blob.new(to_js([buffer]), options)
+    url = window.URL.createObjectURL(blob)
+    link = document.createElement("a")
+    link.href = url
+    link.download = file_name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(create_once_callable(lambda: window.URL.revokeObjectURL(url)), 4000)
+
+
+async def _ensure_openpyxl() -> None:
+    try:
+        import openpyxl  # noqa: F401
+        return
+    except ImportError:
+        pass
+    try:
+        import pyodide_js
+
+        await pyodide_js.loadPackage("openpyxl")
+        import openpyxl  # noqa: F401
+    except Exception:  # noqa: BLE001 - paquete fuera del lote de Pyodide
+        import micropip
+
+        await micropip.install("openpyxl")
+
+
+async def export_excel() -> None:
+    state = by_id("status-state")
+    button = by_id("export-excel-button")
+    state.textContent = "Generando Excel…"
+    if button is not None:
+        button.disabled = True
+    try:
+        data = _excel_report_data()
+        await _ensure_openpyxl()
+        import excel_report
+
+        content = excel_report.build_workbook(data)
+        _download_bytes(content, _excel_file_name(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        state.textContent = "Excel descargado"
+    except (ValueError, ZeroDivisionError) as error:
+        state.textContent = f"No se pudo exportar: {error}"
+    except Exception as error:  # noqa: BLE001 - se informa en la barra de estado
+        state.textContent = f"No se pudo exportar: {error}"
+    finally:
+        if button is not None:
+            button.disabled = False
 
 
 STAGE_INTRO = {
@@ -5042,6 +5409,10 @@ def _handle_click(event):
         toggle_details_panel(str(action_element.getAttribute("data-target")))
     elif action == "stage":
         set_stage(str(action_element.getAttribute("data-value")))
+    elif action == "export-excel":
+        import asyncio
+
+        asyncio.ensure_future(export_excel())
     elif action == "spec-compute":
         compute_spectra()
     elif action == "spec-example":
